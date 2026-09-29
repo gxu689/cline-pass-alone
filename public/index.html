@@ -90,8 +90,18 @@
   .bulk-tools { display:flex; gap:8px; align-items:flex-start; flex-wrap:wrap; margin:12px 0 4px; }
   .bulk-tools textarea { width:min(680px, 100%); min-height:64px; resize:vertical; background:var(--card2); color:var(--text); border:1px solid var(--border); border-radius:7px; padding:8px 10px; font:12px Consolas, monospace; }
   .usage-card { margin-top:14px; padding-top:14px; border-top:1px solid var(--border); }
-  .usage-bar { display:inline-block; width:110px; height:7px; background:#2a2f3c; border-radius:5px; overflow:hidden; vertical-align:middle; margin-right:6px; }
-  .usage-bar i { display:block; height:100%; background:var(--green); }
+  .usage-list { display:flex; flex-direction:column; gap:10px; }
+  .usage-account { border:1px solid var(--border); border-radius:8px; padding:10px 12px; background:var(--card2); }
+  .usage-account-title { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:7px; }
+  .usage-account-title .dim { font-size:11px; }
+  .usage-row { display:grid; grid-template-columns:70px minmax(80px, 1fr) 70px 26px; align-items:center; gap:10px; min-height:28px; font-size:13px; }
+  .usage-label { color:var(--dim); font-family:Consolas, monospace; }
+  .usage-track { height:9px; background:#e5e9ee; border-radius:7px; overflow:hidden; position:relative; }
+  .usage-track i { display:block; height:100%; min-width:2px; background:#13c98b; border-radius:7px; }
+  .usage-pct { text-align:right; font-weight:600; color:var(--text); }
+  .usage-refresh { background:transparent; color:var(--dim); border:0; padding:2px; font-size:20px; line-height:1; }
+  .usage-refresh:hover { color:var(--accent); border:0; }
+  .usage-detail { color:var(--dim); font-size:11px; margin-left:80px; }
   .schedule-grid { display:grid; grid-template-columns:repeat(2, minmax(220px, 1fr)); gap:14px 22px; margin:12px 0; }
   .schedule-grid label { display:flex; flex-direction:column; gap:6px; color:var(--dim); font-size:12px; }
   .schedule-grid input, .schedule-grid select { width:100%; max-width:none; padding:8px 10px; }
@@ -179,8 +189,8 @@
         <h2 style="margin:0">账号额度</h2>
         <button class="ghost" onclick="loadUsage(true)" id="usageRefreshBtn">↻ 刷新额度</button>
       </div>
-      <div class="dim" style="font-size:12px; margin:6px 0 10px">尝试从 Cline 官方账户接口读取余额。普通 API Key 可能无权访问账户资料；无法读取时会显示原因。</div>
-      <table><thead><tr><th>账号</th><th>已用</th><th>上限</th><th>剩余</th><th>重置时间</th><th>来源</th></tr></thead><tbody id="usageBody"><tr><td colspan="6" class="empty">点击刷新额度</td></tr></tbody></table>
+      <div class="dim" style="font-size:12px; margin:6px 0 10px">按 spark 和 7d 窗口显示已用比例。官方接口未返回周期用量时会显示余额比例或明确原因；普通 API Key 可能无权访问账户资料。</div>
+      <div id="usageBody" class="usage-list"><div class="empty">点击刷新额度</div></div>
       <div id="usageStatus" class="dim" style="font-size:12px; margin-top:8px"></div>
     </div>
   </div>
@@ -849,21 +859,38 @@ async function testSelectedAccounts() {
 function usageNumber(value, unit) {
   return value == null ? '—' : `${Number(value).toLocaleString()} ${escapeHtml(unit || '')}`.trim();
 }
+let USAGE_ITEMS = [];
 function renderUsage(items) {
   $('#usageBody').innerHTML = (items || []).map((u) => {
-    const pct = u.limit > 0 && u.used != null ? Math.min(100, Math.max(0, u.used / u.limit * 100)) : 0;
-    return `<tr><td><span class="badge">${escapeHtml(u.account)}</span></td><td>${usageNumber(u.used, u.unit)}${u.limit > 0 ? `<div class="usage-bar"><i style="width:${pct}%"></i></div>` : ''}</td><td>${usageNumber(u.limit, u.unit)}</td><td class="${u.ok ? 'match' : 'dim'}">${u.ok ? usageNumber(u.remaining, u.unit) : '不可用'}</td><td class="dim">${u.resetAt ? escapeHtml(new Date(u.resetAt).toLocaleString()) : '—'}</td><td class="dim" style="font-size:11px">${u.ok ? escapeHtml(u.source || '') : escapeHtml(u.error || '接口未返回额度')}</td></tr>`;
-  }).join('') || '<tr><td colspan="6" class="empty">暂无账号</td></tr>';
+    const periods = Array.isArray(u.periods) && u.periods.length ? u.periods : (u.ok && u.limit > 0 && u.used != null
+      ? [{ label: '额度', percent: Math.min(100, Math.max(0, u.used / u.limit * 100)), used: u.used, limit: u.limit, unit: u.unit, resetAt: u.resetAt }]
+      : []);
+    const rows = periods.map((p) => {
+      const pct = Math.max(0, Math.min(100, Number(p.percent) || 0));
+      const detail = p.used != null && p.limit != null ? `<div class="usage-detail">${usageNumber(p.used, p.unit)} / ${usageNumber(p.limit, p.unit)}${p.resetAt ? ` · ${escapeHtml(new Date(p.resetAt).toLocaleString())}` : ''}</div>` : '';
+      return `<div class="usage-row"><span class="usage-label">${escapeHtml(p.label)}</span><span class="usage-track"><i style="width:${pct.toFixed(1)}%"></i></span><span class="usage-pct">${pct.toFixed(1)}%</span><span></span></div>${detail}`;
+    }).join('');
+    const body = rows || `<div class="dim" style="font-size:12px">${u.ok && u.remaining != null ? `剩余 ${usageNumber(u.remaining, u.unit)}；接口未返回周期用量` : escapeHtml(u.error || '接口未返回周期用量')}</div>`;
+    return `<div class="usage-account"><div class="usage-account-title"><span class="badge">${escapeHtml(u.account)}</span><span class="dim">${u.ok ? escapeHtml(u.source || '') : '不可用'} <button class="usage-refresh" onclick="loadUsage(true, ${jsArg(u.id || '')})" title="刷新此账号用量">↻</button></span></div>${body}</div>`;
+  }).join('') || '<div class="empty">暂无账号</div>';
 }
-async function loadUsage(force = false) {
+async function loadUsage(force = false, id = '') {
   const btn = $('#usageRefreshBtn');
-  if (force) { btn.disabled = true; btn.textContent = '读取中…'; }
+  if (force && !id) { btn.disabled = true; btn.textContent = '读取中…'; }
   try {
-    const r = await api(`/api/accounts/usage${force ? '?refresh=1' : ''}`);
-    renderUsage(r.usage || []);
-    $('#usageStatus').textContent = `更新于 ${new Date(r.checkedAt || Date.now()).toLocaleTimeString()} · 超出并发上限的请求会进入该账号队列`;
+    const params = new URLSearchParams();
+    if (force) params.set('refresh', '1');
+    if (id) params.set('id', id);
+    const query = params.toString();
+    const r = await api(`/api/accounts/usage${query ? '?' + query : ''}`);
+    if (r.ok) {
+      if (id) USAGE_ITEMS = USAGE_ITEMS.map((u) => u.id === id ? (r.usage || [])[0] || u : u);
+      else USAGE_ITEMS = r.usage || [];
+      renderUsage(USAGE_ITEMS);
+      $('#usageStatus').textContent = `更新于 ${new Date(r.checkedAt || Date.now()).toLocaleTimeString()}`;
+    } else throw new Error(r.error?.message || '读取失败');
   } catch (e) { $('#usageStatus').textContent = '额度读取失败，请稍后重试'; }
-  if (force) { btn.disabled = false; btn.textContent = '↻ 刷新额度'; }
+  if (force && !id) { btn.disabled = false; btn.textContent = '↻ 刷新额度'; }
 }
 
 async function testAccount(i, btn) {

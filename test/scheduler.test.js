@@ -16,15 +16,31 @@ async function freePort() {
   return port;
 }
 
-test('全局调度、429 换号、传输策略和流式首包重试', { timeout: 20000 }, async () => {
+test('账户周期用量与全局调度、换号及流式重试', { timeout: 20000 }, async () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cline-scheduler-'));
   const proxyPort = await freePort();
   const events = [];
   const routeEvents = [];
   const active = { total: 0, a: 0, b: 0, maxTotal: 0, maxA: 0, maxB: 0 };
   let behavior = 'delay';
+  let usageMode = 'periods';
   let stickyFailures = 0;
   const upstream = http.createServer(async (req, res) => {
+    if (req.url === '/users/me') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ id: 'test-user' }));
+      return;
+    }
+    if (req.url === '/users/test-user/usage') {
+      res.writeHead(usageMode === 'balance' ? 401 : 200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(usageMode === 'balance' ? { error: 'unauthorized' } : { data: { spark: { used: 0, limit: 100 }, '7d': { used: 29, limit: 100 } } }));
+      return;
+    }
+    if (req.url === '/users/test-user/balance') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ used: 29, limit: 100, remaining: 71 }));
+      return;
+    }
     if (req.url !== '/chat/completions') { res.writeHead(404).end(); return; }
     const chunks = [];
     for await (const chunk of req) chunks.push(chunk);
@@ -102,6 +118,17 @@ test('全局调度、429 换号、传输策略和流式首包重试', { timeout:
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
     assert.ok(ready, 'proxy did not start');
+    const usage = await (await fetch(`${base}/api/accounts/usage?refresh=1`)).json();
+    assert.equal(usage.usage[0].periods.find((p) => p.label === 'spark').percent, 0);
+    assert.equal(usage.usage[0].periods.find((p) => p.label === '7d').percent, 29);
+    const selectedUsage = await (await fetch(`${base}/api/accounts/usage?id=${usage.usage[0].id}&refresh=1`)).json();
+    assert.equal(selectedUsage.usage.length, 1);
+    assert.equal(selectedUsage.usage[0].id, usage.usage[0].id);
+    usageMode = 'balance';
+    const balance = await (await fetch(`${base}/api/accounts/usage?id=${usage.usage[0].id}&refresh=1`)).json();
+    assert.equal(balance.usage[0].used, 29);
+    assert.deepEqual(balance.usage[0].periods, []);
+    usageMode = 'periods';
     assert.ok((await Promise.all(Array.from({ length: 6 }, () => chat()))).every((r) => r.status === 200));
     assert.ok(active.maxTotal <= 2, `global concurrency ${active.maxTotal}`);
     assert.ok(active.maxA <= 1 && active.maxB <= 1, `account concurrency ${active.maxA}/${active.maxB}`);

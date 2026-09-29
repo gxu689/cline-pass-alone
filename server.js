@@ -227,11 +227,41 @@ function normalizeUsage(json, source) {
   if (used == null && limit == null && remaining == null && !resetAt) return null;
   return { used, limit, remaining, resetAt, unit: String(unit), source };
 }
+function usagePercent(value) {
+  const direct = firstNumber(value?.percent, value?.percentage, value?.usedPercent, value?.usagePercent, value?.utilization);
+  if (direct != null) return Math.round(Math.max(0, Math.min(100, direct <= 1 ? direct * 100 : direct)) * 10) / 10;
+  const used = firstNumber(value?.used, value?.usedAmount, value?.consumed, value?.usage, value?.value, value?.current);
+  const limit = firstNumber(value?.limit, value?.max, value?.quota, value?.total, value?.capacity);
+  if (used != null && limit > 0) return Math.round(Math.max(0, Math.min(100, used / limit * 100)) * 10) / 10;
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.round(Math.max(0, Math.min(100, value <= 1 ? value * 100 : value)) * 10) / 10;
+  return null;
+}
+function normalizeUsagePeriods(json) {
+  const root = json?.data && typeof json.data === 'object' ? json.data : json;
+  const source = root?.periods || root?.windows || root?.limits || root?.usage || root;
+  if (!source || typeof source !== 'object' || Array.isArray(source)) return [];
+  const aliases = [
+    ['spark', ['spark']],
+    ['7d', ['7d', '7day', 'sevenDay', 'seven_day', 'weekly', 'week', 'rolling7d', 'rolling_7d']],
+  ];
+  const periods = [];
+  for (const [label, names] of aliases) {
+    const key = Object.keys(source).find((k) => names.includes(k) || names.includes(k.toLowerCase()));
+    if (!key) continue;
+    const value = source[key];
+    const percent = usagePercent(value);
+    if (percent == null) continue;
+    const used = firstNumber(value?.used, value?.usedAmount, value?.consumed, value?.usage, value?.value, value?.current);
+    const limit = firstNumber(value?.limit, value?.max, value?.quota, value?.total, value?.capacity);
+    periods.push({ label, percent, used, limit, unit: String(value?.unit || value?.currency || ''), resetAt: value?.resetAt || value?.reset_at || value?.periodEnd || null });
+  }
+  return periods;
+}
 async function fetchAccountUsage(acc, force = false) {
   META.accountUsage = META.accountUsage || {};
   const cacheKey = crypto.createHash('sha256').update(acc.key).digest('hex');
   const cached = META.accountUsage[cacheKey];
-  if (!force && cached && Date.now() - cached.checkedAt < 30000) return { ...cached, account: acc.name };
+  if (!force && cached && Date.now() - cached.checkedAt < 30000) return { ...cached, account: acc.name, id: accountId(acc.key) };
   let result;
   let error;
   try {
@@ -244,19 +274,30 @@ async function fetchAccountUsage(acc, force = false) {
       error = `账户资料接口不可用（HTTP ${me.status}）`;
     } else {
       const path = `/users/${encodeURIComponent(String(id))}/balance`;
-      const balance = await fetchJSONWithAccount(acc, `${config.upstreamBase}${path}`, { headers: chatHeaders(acc.key) }, 10000);
-      if (balance.status === 200) {
-        result = normalizeUsage(balance.json, path);
-        if (result) result = { ...result, unit: 'credits' };
-        else error = '官方余额接口未返回可识别的余额字段';
-      } else if (balance.status === 401 || balance.status === 403) {
-        error = '此 API Key 无权读取 Cline 账户余额；需账户登录令牌';
-      } else error = `官方余额接口不可用（HTTP ${balance.status}）`;
+      const candidates = [`/users/${encodeURIComponent(String(id))}/usage`, path];
+      let lastStatus = 0;
+      let unauthorized = false;
+      for (const endpoint of candidates) {
+        const response = await fetchJSONWithAccount(acc, `${config.upstreamBase}${endpoint}`, { headers: chatHeaders(acc.key) }, 10000);
+        lastStatus = response.status;
+        unauthorized ||= response.status === 401 || response.status === 403;
+        const periods = normalizeUsagePeriods(response.json);
+        const summary = normalizeUsage(response.json, endpoint);
+        if (response.status === 200 && (periods.length || summary)) {
+          result = { ...(summary || {}), periods, source: endpoint, unit: summary?.unit || 'credits' };
+          break;
+        }
+      }
+      if (!result) {
+        error = unauthorized
+          ? '此 API Key 无权读取 Cline 账户用量；需账户登录令牌'
+          : `官方用量接口不可用（HTTP ${lastStatus || '未知'}）`;
+      }
     }
   } catch (e) { error = e.message; }
   const out = result
-    ? { ...result, ok: true, checkedAt: Date.now(), account: acc.name }
-    : { ok: false, account: acc.name, checkedAt: Date.now(), error: error || '额度不可用' };
+    ? { ...result, ok: true, checkedAt: Date.now(), account: acc.name, id: accountId(acc.key) }
+    : { ok: false, account: acc.name, id: accountId(acc.key), checkedAt: Date.now(), error: error || '额度不可用' };
   META.accountUsage[cacheKey] = { ...out };
   saveMeta();
   return out;
@@ -1072,7 +1113,9 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && p === '/api/accounts/usage') {
       const force = url.searchParams.get('refresh') === '1';
-      const accounts = (config.accounts || []).filter((a) => a && a.key);
+      const id = url.searchParams.get('id');
+      const accounts = (config.accounts || []).filter((a) => a && a.key && (!id || accountId(a.key) === id));
+      if (id && !accounts.length) return sendJSON(res, 404, { error: { message: 'account not found' } });
       const usage = await Promise.all(accounts.map((a) => fetchAccountUsage(a, force)));
       return sendJSON(res, 200, { ok: true, usage, checkedAt: Date.now() });
     }
