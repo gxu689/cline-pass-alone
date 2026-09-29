@@ -16,6 +16,42 @@ async function freePort() {
   return port;
 }
 
+test('未配置上游账号时控制台仍可登录并展示页面', { timeout: 10000 }, async () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cline-console-'));
+  const port = await freePort();
+  fs.writeFileSync(path.join(dataDir, 'config.json'), JSON.stringify({ port, proxyKey: 'console-test-key', accounts: [] }));
+  const metadataPath = path.join(dataDir, 'metadata.json');
+  fs.writeFileSync(metadataPath, JSON.stringify({ models: { 'cline-pass/test': { lastProvider: 'known', account: 'old-name', trace: [{ status: 200 }] } }, history: [] }));
+  const child = spawn(process.execPath, ['server.js'], { cwd: path.resolve('.'), env: { ...process.env, DATA_DIR: dataDir, BIND_HOST: '127.0.0.1' }, stdio: 'ignore' });
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    let ready = false;
+    for (let i = 0; i < 100; i++) {
+      if (child.exitCode !== null) throw new Error('proxy exited before ready');
+      try { ready = (await fetch(`${base}/api/meta`)).ok; } catch {}
+      if (ready) break;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.ok(ready, 'proxy did not start');
+    assert.equal((await fetch(`${base}/api/models`)).status, 401);
+    const headers = { 'X-Admin-Key': 'console-test-key' };
+    const modelsResponse = await fetch(`${base}/api/models`, { headers });
+    assert.equal(modelsResponse.status, 200);
+    assert.ok(Array.isArray((await modelsResponse.json()).subscription));
+    assert.equal((await fetch(`${base}/api/security`, { headers })).status, 200);
+    const migratedModel = JSON.parse(fs.readFileSync(metadataPath, 'utf8')).models['cline-pass/test'];
+    assert.equal(migratedModel.lastProvider, 'known');
+    assert.equal(migratedModel.account, undefined);
+    assert.equal(migratedModel.trace, undefined);
+    const page = await (await fetch(base)).text();
+    assert.match(page, /运行概览/);
+    assert.match(page, /id="overviewAccounts"/);
+  } finally {
+    child.kill();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test('账户周期用量与全局调度、换号及流式重试', { timeout: 20000 }, async () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cline-scheduler-'));
   const proxyPort = await freePort();
@@ -139,7 +175,12 @@ test('账户周期用量与全局调度、换号及流式重试', { timeout: 200
     const stats = await (await fetch(`${base}/api/stats?tzOffset=480`)).json();
     assert.ok(stats.today.requests >= 6);
     assert.ok(stats.today.tokens >= 30);
-    assert.equal(fs.statSync(path.join(dataDir, 'metadata.json')).mode & 0o777, 0o600);
+    const metadataPath = path.join(dataDir, 'metadata.json');
+    assert.equal(fs.statSync(metadataPath).mode & 0o777, 0o600);
+    const modelMeta = JSON.parse(fs.readFileSync(metadataPath, 'utf8')).models['cline-pass/test'];
+    assert.equal(modelMeta.account, undefined);
+    assert.equal(modelMeta.trace, undefined);
+    assert.equal(modelMeta.usage, undefined);
 
     await settings(); behavior = 'rate'; events.length = 0;
     const rate = await chat();

@@ -85,6 +85,15 @@ const saveMeta = () => {
   fs.writeFileSync(META_PATH, JSON.stringify(META, null, 2), { mode: 0o600 });
   fs.chmodSync(META_PATH, 0o600);
 };
+// 旧版本会把最近请求详情混入模型元数据；这些内容应只存在于两天日志中。
+let metadataCleaned = false;
+for (const model of Object.values(META.models)) {
+  if (!model || typeof model !== 'object') continue;
+  for (const field of ['account', 'accountId', 'trace', 'usage', 'error', 'attempts', 'stream', 'status', 'ms', 'ip', 'userAgent', 'endpoint', 'provider', 'canonical']) {
+    if (Object.hasOwn(model, field)) { delete model[field]; metadataCleaned = true; }
+  }
+}
+if (metadataCleaned) saveMeta();
 const REQUEST_LOG = new RequestLogStore(LOG_PATH, Array.isArray(META.history) ? META.history : []);
 if (Array.isArray(META.history) && META.history.length) { META.history = []; saveMeta(); }
 setInterval(() => REQUEST_LOG.prune(), 60 * 1000).unref();
@@ -654,8 +663,12 @@ async function fetchOfficialModels() {
 }
 
 function record(modelId, info) {
-  const { status, ip, userAgent, endpoint, ...modelInfo } = info;
-  META.models[modelId] = { ...(META.models[modelId] || {}), ...modelInfo };
+  const model = (META.models[modelId] ||= {});
+  if (info.provider) model.lastProvider = info.provider;
+  if (info.canonical) model.canonicalSlug = info.canonical;
+  if (Number.isFinite(info.ms)) model.lastMs = info.ms;
+  model.lastStatus = info.status;
+  model.lastRequestAt = Date.now();
   REQUEST_LOG.append({ model: modelId, ...info });
   if (info.account) {
     META.stats = META.stats || {};
@@ -1044,10 +1057,13 @@ function sendJSON(res, status, obj) {
 
 async function catalog() {
   if (META.catalog && Date.now() - (META.catalogFetchedAt || 0) < 3600e3) return META.catalog;
-  const acc = pickAccount();
-  const { json } = await fetchJSONWithAccount(acc, `${config.upstreamBase}/models`, { headers: chatHeaders(acc.key) });
-  const ids = (json?.data || []).map((m) => m.id);
-  if (ids.length) { META.catalog = ids; META.catalogFetchedAt = Date.now(); saveMeta(); }
+  const acc = enabledAccounts()[0];
+  if (!acc) return META.catalog || [];
+  try {
+    const { status, json } = await fetchJSONWithAccount(acc, `${config.upstreamBase}/models`, { headers: chatHeaders(acc.key) }, 10000);
+    const ids = status === 200 && Array.isArray(json?.data) ? json.data.map((m) => m.id).filter(validModelId) : [];
+    if (ids.length) { META.catalog = ids; META.catalogFetchedAt = Date.now(); saveMeta(); }
+  } catch { /* 目录不可用时保留已有缓存，控制台其他功能仍可访问 */ }
   return META.catalog || [];
 }
 
