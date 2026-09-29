@@ -82,6 +82,17 @@
   .trace .tr { font-family: Consolas, monospace; }
   .trace .tr.ok { color: var(--green); }
   .trace .tr.bad { color: var(--orange); }
+  .page-nav { display:flex; gap:6px; flex-wrap:wrap; padding:6px; margin:0 0 18px; background:var(--card); border:1px solid var(--border); border-radius:10px; position:sticky; top:10px; z-index:5; }
+  .page-tab { background:transparent; color:var(--dim); border:1px solid transparent; padding:8px 14px; border-radius:7px; cursor:pointer; font-size:13px; }
+  .page-tab:hover { color:var(--text); background:var(--card2); }
+  .page-tab.active { color:#fff; background:var(--accent); }
+  .page-hidden { display:none !important; }
+  .bulk-tools { display:flex; gap:8px; align-items:flex-start; flex-wrap:wrap; margin:12px 0 4px; }
+  .bulk-tools textarea { width:min(680px, 100%); min-height:64px; resize:vertical; background:var(--card2); color:var(--text); border:1px solid var(--border); border-radius:7px; padding:8px 10px; font:12px Consolas, monospace; }
+  .usage-card { margin-top:14px; padding-top:14px; border-top:1px solid var(--border); }
+  .usage-bar { display:inline-block; width:110px; height:7px; background:#2a2f3c; border-radius:5px; overflow:hidden; vertical-align:middle; margin-right:6px; }
+  .usage-bar i { display:block; height:100%; background:var(--green); }
+  @media (max-width: 760px) { body { padding:14px 10px; } .page-nav { top:4px; } .page-tab { flex:1; min-width:92px; padding:8px 7px; } .ups-panel { min-width:300px; } table { display:block; overflow-x:auto; } }
 </style>
 </head>
 <body>
@@ -98,11 +109,11 @@
   <h1>Cline Pass 上游控制台</h1>
   <div class="sub">本地代理 + 观测面板 —— 枚举订阅模型背后的上游，多上游按优先级自动故障转移，支持精确钉住 / 优先回退 / 排除上游 / 成本·首字·吞吐排序</div>
 
-  <div id="noKeyBanner" class="banner" style="display:none; border-left-color: var(--red);">
+  <div id="noKeyBanner" class="banner" data-page="overview" style="display:none; border-left-color: var(--red);">
     <b>尚未配置上游 API Key：</b>在下方「账号管理」添加你的 Cline Pass 账号（sk_ 开头的 key）并保存即可开始使用；也可通过 config.json 的 accounts 或环境变量 CLINE_PASS_KEY 提供。
   </div>
 
-  <div class="banner">
+  <div class="banner" data-page="overview">
     <b>实测结论（决定了本工具的工作方式）：</b><br>
     ① <b>上游可枚举、可观测</b>：订阅模型响应元数据里带背后真正的模型 ID、可用上游列表与本次实际命中的上游；
     「探测」按钮还会用一次零 token 消耗的假上游请求让网关报出精确的可用上游清单（直连→OpenRouter，规划器→Vercel AI Gateway）。<br>
@@ -115,14 +126,22 @@
     ④ <b>多上游优先级 + 故障转移</b>：勾选多个上游即按勾选顺序逐个尝试——第一个异常（报错/网络失败/超时）自动顺切下一个，全部失败才把错误透传给客户端；「排除」的上游永不被使用（自动模式下会向网关注入排除偏好）。流式请求在首包（SSE 开始）前同样可切换，SSE 开始后透传不可重试。
   </div>
 
-  <div class="toolbar">
+  <div class="toolbar" data-page="overview">
     <span class="chip" id="proxyBase" title="点击复制：把任意 OpenAI 兼容客户端的 Base URL 指向这里"></span>
     <button class="ghost" onclick="loadAll()">↻ 刷新</button>
     <button class="ghost" onclick="probeAll()" id="probeAllBtn">批量探测订阅模型</button>
     <span class="dim" style="font-size:12px" id="status"></span>
   </div>
 
-  <div class="card">
+  <nav class="page-nav" aria-label="控制台页面">
+    <button class="page-tab active" data-page-tab="overview" onclick="switchPage('overview', this)">概览</button>
+    <button class="page-tab" data-page-tab="accounts" onclick="switchPage('accounts', this)">账号池</button>
+    <button class="page-tab" data-page-tab="models" onclick="switchPage('models', this)">模型管理</button>
+    <button class="page-tab" data-page-tab="testing" onclick="switchPage('testing', this)">测试与历史</button>
+    <button class="page-tab" data-page-tab="security" onclick="switchPage('security', this)">安全与目录</button>
+  </nav>
+
+  <div class="card" data-page="accounts">
     <h2>账号管理（Cline Pass 账号池）</h2>
     <div style="display:flex; gap:10px; align-items:center; margin-bottom:10px; flex-wrap:wrap;">
       <label class="dim" style="font-size:13px">模式：</label>
@@ -130,18 +149,39 @@
         <option value="single">单账号（手动指定）</option>
         <option value="roundrobin">账号池轮询</option>
       </select>
-      <label class="dim" style="font-size:12px"><input type="checkbox" id="accShowKeys" onchange="toggleKeyVis()"> 显示密钥</label>
+      <label class="dim" style="font-size:13px">单账号并发：</label>
+      <input id="accountConcurrency" type="number" min="1" max="32" value="1" title="每个账号同时执行的上游请求数">
+      <span class="dim" style="font-size:12px">个</span>
+      <label class="dim" style="font-size:12px"><input type="checkbox" id="accShowKeys" onchange="toggleKeyVis()"> 显示当前输入</label>
       <button class="ghost" onclick="addAccountRow()">＋ 添加账号</button>
       <button onclick="saveAccounts()">保存账号配置</button>
       <span class="dim" style="font-size:12px" id="accMsg"></span>
     </div>
+    <div class="bulk-tools">
+      <textarea id="bulkAccounts" placeholder="批量粘贴账号：每行一个 key；也支持 名称,key 或 名称\tkey"></textarea>
+      <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:flex-start">
+        <button class="ghost" onclick="importAccounts()">批量导入</button>
+        <button class="ghost" onclick="testSelectedAccounts()">测试选中账号</button>
+      </div>
+    </div>
+    <div class="dim" style="font-size:11px; margin-bottom:8px">可一次粘贴多行，导入后仍需点击「保存账号配置」。已保存的密钥以占位符显示；保持占位符即可沿用原密钥。勾选左侧复选框后可批量测试。代理 Token 只统计经过本服务且上游返回 usage 的请求。</div>
     <table>
-      <thead><tr><th>使用</th><th>名称</th><th>API Key</th><th>启用</th><th>请求数</th><th>最近使用</th><th>操作</th></tr></thead>
-      <tbody id="accBody"><tr><td colspan="7" class="empty">加载中…</td></tr></tbody>
+      <thead><tr><th>测试</th><th>使用</th><th>名称</th><th>API Key</th><th>启用</th><th>请求数</th><th>代理 Token</th><th>并发</th><th>最近使用</th><th>操作</th></tr></thead>
+      <tbody id="accBody"><tr><td colspan="10" class="empty">加载中…</td></tr></tbody>
     </table>
+    <div id="batchTestMsg" class="result" style="display:none"></div>
+    <div class="usage-card">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
+        <h2 style="margin:0">账号额度</h2>
+        <button class="ghost" onclick="loadUsage(true)" id="usageRefreshBtn">↻ 刷新额度</button>
+      </div>
+      <div class="dim" style="font-size:12px; margin:6px 0 10px">尝试从 Cline 官方账户接口读取余额。普通 API Key 可能无权访问账户资料；无法读取时会显示原因。</div>
+      <table><thead><tr><th>账号</th><th>已用</th><th>上限</th><th>剩余</th><th>重置时间</th><th>来源</th></tr></thead><tbody id="usageBody"><tr><td colspan="6" class="empty">点击刷新额度</td></tr></tbody></table>
+      <div id="usageStatus" class="dim" style="font-size:12px; margin-top:8px"></div>
+    </div>
   </div>
 
-  <div class="card">
+  <div class="card" data-page="security">
     <h2>访问与安全（下游密钥）</h2>
     <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
       <label class="dim" style="font-size:13px">代理密钥：</label>
@@ -160,7 +200,7 @@
     </div>
   </div>
 
-  <div class="card">
+  <div class="card" data-page="models">
     <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
       <h2 style="margin:0">订阅模型（cline-pass/*）</h2>
       <div style="display:flex; gap:10px; align-items:center;">
@@ -177,7 +217,7 @@
     </table>
   </div>
 
-  <div class="card">
+  <div class="card" data-page="testing">
     <h2>测试台（发一条真实请求，验证目标上游是否被网关采纳）</h2>
     <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
       <select id="testModel" style="min-width:240px"></select>
@@ -188,7 +228,7 @@
     <div class="result" id="testResult"></div>
   </div>
 
-  <div class="card">
+  <div class="card" data-page="testing">
     <h2>请求历史（最近 100 条，经代理的请求自动记录）</h2>
     <table>
       <thead><tr><th>时间</th><th>模型</th><th>账号</th><th>实际上游</th><th>背后模型</th><th>耗时</th><th>方式</th><th>尝试序列</th></tr></thead>
@@ -196,7 +236,7 @@
     </table>
   </div>
 
-  <div class="card">
+  <div class="card" data-page="security">
     <h2>完整模型目录（Cline 公开目录，含 :free 可钉住模型）</h2>
     <div style="margin-bottom:10px">
       <label class="dim" style="font-size:13px"><input type="checkbox" id="exposeCatalog" onchange="saveExposeCatalog(this.checked)"> 把目录模型加入代理的 /v1/models（默认关闭：客户端只看到订阅模型）</label>
@@ -213,6 +253,8 @@ let DATA = null;
 let AUTH_KEY = localStorage.getItem('cps_key') || '';
 const $ = (s) => document.querySelector(s);
 const fmt = (ts) => new Date(ts).toLocaleTimeString();
+const escapeHtml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+const jsArg = (s) => escapeHtml(JSON.stringify(String(s)));
 
 async function api(path, body) {
   const headers = body ? { 'Content-Type': 'application/json' } : {};
@@ -256,7 +298,7 @@ function upstreamOptions(meta, selected) {
     const st = stMap[u]?.status;
     const tag = st && ST_TAG[st] ? ' · ' + ST_TAG[st] : '';
     const label = d ? `${u}（${d.name}${d.endpoints > 1 ? ' ×' + d.endpoints : ''}${tag}）` : `${u}${tag}`;
-    html += `<option value="${u}" ${u === selected ? 'selected' : ''}>${label}</option>`;
+    html += `<option value="${escapeHtml(u)}" ${u === selected ? 'selected' : ''}>${escapeHtml(label)}</option>`;
   }
   return html;
 }
@@ -277,22 +319,22 @@ function upstreamPanel(id, meta, cfg) {
     const isEx = excSet.has(u);
     const stTxt = st && ST_TAG[st] ? ST_TAG[st] : '';
     const stCls = ST_CLS[st] || 'unknown';
-    return `<div class="uprow${isEx ? ' excluded' : ''}" data-m="${id}" data-u="${u}" data-stat="${stTxt}" data-statcls="${stCls}">
+    return `<div class="uprow${isEx ? ' excluded' : ''}" data-m="${escapeHtml(id)}" data-u="${escapeHtml(u)}" data-stat="${escapeHtml(stTxt)}" data-statcls="${stCls}">
       <span class="upno" title="优先级顺序（尝试顺序）">${no >= 0 ? no + 1 : ''}</span>
-      <span class="upinfo"><span class="upslug mono">${u}</span><span class="upname" title="${d ? d.name : ''}">${d ? d.name : ''}${d && d.endpoints > 1 ? ' ×' + d.endpoints : ''}</span></span>
+      <span class="upinfo"><span class="upslug mono">${escapeHtml(u)}</span><span class="upname" title="${escapeHtml(d ? d.name : '')}">${escapeHtml(d ? d.name : '')}${d && d.endpoints > 1 ? ' ×' + d.endpoints : ''}</span></span>
       <span class="upstat ${isEx ? 'excl' : stCls}">${isEx ? '🚫已排除' : stTxt}</span>
-      <button class="pill${isSel ? ' prio-on' : ''}" title="优先：加入尝试序列（异常自动顺切下一个）；再点一次取消" onclick="toggleUp('${id}','sel','${u}',${isSel ? 'false' : 'true'})">优先</button>
-      <button class="pill${isEx ? ' excl-on' : ''}" title="排除：该上游永不被使用；再点一次取消" onclick="toggleUp('${id}','excl','${u}',${isEx ? 'false' : 'true'})">排除</button>
-      <button class="ghost mini arrow-btn" style="${isSel ? '' : 'display:none'}" onclick="moveUp('${id}','${u}')" title="上移提高优先级">↑</button>
-      <button class="ghost mini arrow-btn" style="${isSel ? '' : 'display:none'}" onclick="moveDown('${id}','${u}')" title="下移降低优先级">↓</button>
+      <button class="pill${isSel ? ' prio-on' : ''}" title="优先：加入尝试序列（异常自动顺切下一个）；再点一次取消" onclick="toggleUp(${jsArg(id)},'sel',${jsArg(u)},${isSel ? 'false' : 'true'})">优先</button>
+      <button class="pill${isEx ? ' excl-on' : ''}" title="排除：该上游永不被使用；再点一次取消" onclick="toggleUp(${jsArg(id)},'excl',${jsArg(u)},${isEx ? 'false' : 'true'})">排除</button>
+      <button class="ghost mini arrow-btn" style="${isSel ? '' : 'display:none'}" onclick="moveUp(${jsArg(id)},${jsArg(u)})" title="上移提高优先级">↑</button>
+      <button class="ghost mini arrow-btn" style="${isSel ? '' : 'display:none'}" onclick="moveDown(${jsArg(id)},${jsArg(u)})" title="下移降低优先级">↓</button>
     </div>`;
   }).join('');
   return `<details class="ups-wrap">
     <summary><span class="ups-sum">${summaryChips(cfg)}</span></summary>
     <div class="ups-panel">${rows || '<div class="empty">尚未探测到上游，先点「探测」</div>'}
       <div class="ups-tools">
-        <button class="ghost mini" onclick="bulkUp('${id}','all')" title="全部按可用状态排序加入优先序列">全选优先</button>
-        <button class="ghost mini" onclick="bulkUp('${id}','clear')" title="清空优先与排除（回到自动）">清空</button>
+        <button class="ghost mini" onclick="bulkUp(${jsArg(id)},'all')" title="全部按可用状态排序加入优先序列">全选优先</button>
+        <button class="ghost mini" onclick="bulkUp(${jsArg(id)},'clear')" title="清空优先与排除（回到自动）">清空</button>
         <span class="dim" style="font-size:11px; align-self:center;">点「优先」按序尝试（异常自动顺切）；点「排除」永不使用</span>
       </div>
     </div>
@@ -305,7 +347,7 @@ function summaryChips(cfg) {
   const exc = cfg.exclude || [];
   if (!ups.length && !exc.length) return '<span class="sum-auto">自动 · 网关智能选择</span>';
   let html = '';
-  for (let i = 0; i < Math.min(ups.length, 4); i++) html += `<span class="sum-chip">${i + 1}&nbsp;${ups[i]}</span>`;
+  for (let i = 0; i < Math.min(ups.length, 4); i++) html += `<span class="sum-chip">${i + 1}&nbsp;${escapeHtml(ups[i])}</span>`;
   if (ups.length > 4) html += `<span class="sum-chip sum-more">+${ups.length - 4}</span>`;
   if (exc.length) html += `<span class="sum-chip sum-ex">✕ ${exc.length}</span>`;
   return html;
@@ -316,14 +358,14 @@ function render() {
   const rows = DATA.subscription.map((s) => {
     const m = s.meta;
     const ups = (m?.upstreams?.length ?? null);
-    const last = m?.lastProvider ? `<span class="badge">${m.lastProvider}</span>` : '<span class="dim">未探测</span>';
-    const canon = m?.canonicalSlug ? `<span class="mono dim">${m.canonicalSlug}</span>` : '<span class="dim">—</span>';
-    const tier0 = m?.tier0?.length ? `<div class="dim" style="font-size:11px">tier-0: ${m.tier0.join(', ')}</div>` : '';
+    const last = m?.lastProvider ? `<span class="badge">${escapeHtml(m.lastProvider)}</span>` : '<span class="dim">未探测</span>';
+    const canon = m?.canonicalSlug ? `<span class="mono dim">${escapeHtml(m.canonicalSlug)}</span>` : '<span class="dim">—</span>';
+    const tier0 = m?.tier0?.length ? `<div class="dim" style="font-size:11px">tier-0: ${m.tier0.map(escapeHtml).join(', ')}</div>` : '';
     const pipe = m?.pinnable ? `<span class="badge green">可精确钉住·${m.pipeline === 'planner' ? 'Vercel' : 'OpenRouter'}</span>` : '<span class="badge orange">请先探测</span>';
     const mode = s.config.pinMode || 'strict';
     const sort = s.config.sort || '';
-    return `<tr${LAST_ADDED.includes(s.id) ? ' class="row-new"' : ''} data-id="${s.id}">
-      <td class="mono">${s.id}<div style="margin-top:4px">${pipe}</div>${tier0}</td>
+    return `<tr${LAST_ADDED.includes(s.id) ? ' class="row-new"' : ''} data-id="${escapeHtml(s.id)}">
+      <td class="mono">${escapeHtml(s.id)}<div style="margin-top:4px">${pipe}</div>${tier0}</td>
       <td>${canon}</td>
       <td>${ups === null ? '<span class="dim">—</span>' : ups}</td>
       <td>${last}${m?.lastMs ? `<div class="dim" style="font-size:11px">${m.lastMs} ms</div>` : ''}</td>
@@ -331,11 +373,11 @@ function render() {
         ${upstreamPanel(s.id, m, s.config)}
       </td>
       <td>
-        <div><select onchange="saveCfg('${s.id}','pinMode',this.value)" title="严格：逐个只钉勾选的上游；优先：当前上游排 order 首位，其余勾选项作为网关侧回退">
+        <div><select onchange="saveCfg(${jsArg(s.id)},'pinMode',this.value)" title="严格：逐个只钉勾选的上游；优先：当前上游排 order 首位，其余勾选项作为网关侧回退">
           <option value="strict" ${mode === 'strict' ? 'selected' : ''}>严格钉住</option>
           <option value="preferred" ${mode === 'preferred' ? 'selected' : ''}>优先+回退</option>
         </select></div>
-        <select onchange="saveCfg('${s.id}','sort',this.value)" style="margin-top:4px" title="按指标排序上游（不选上游时也可单独使用）">
+        <select onchange="saveCfg(${jsArg(s.id)},'sort',this.value)" style="margin-top:4px" title="按指标排序上游（不选上游时也可单独使用）">
           <option value="" ${!sort ? 'selected' : ''}>网关智能选</option>
           <option value="cost" ${sort === 'cost' ? 'selected' : ''}>最低成本</option>
           <option value="ttft" ${sort === 'ttft' ? 'selected' : ''}>最快首字</option>
@@ -343,15 +385,15 @@ function render() {
         </select>
       </td>
       <td><div class="row-actions">
-        <button class="ghost" onclick="probe('${s.id}', this)">探测</button>
-        <button class="ghost" onclick="test('${s.id}', this)">测试</button>
-        <button class="ghost" onclick="validate('${s.id}', this)" title="把每个上游渠道各钉一次最小请求，标出可用/限流/不可钉">校验</button>
+        <button class="ghost" onclick="probe(${jsArg(s.id)}, this)">探测</button>
+        <button class="ghost" onclick="test(${jsArg(s.id)}, this)">测试</button>
+        <button class="ghost" onclick="validate(${jsArg(s.id)}, this)" title="把每个上游渠道各钉一次最小请求，标出可用/限流/不可钉">校验</button>
       </div></td>
     </tr>`;
   }).join('');
   $('#subBody').innerHTML = rows;
 
-  $('#testModel').innerHTML = DATA.subscription.map((s) => `<option value="${s.id}">${s.id}</option>`).join('');
+  $('#testModel').innerHTML = DATA.subscription.map((s) => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.id)}</option>`).join('');
   onTestModelChange();
 
   $('#catSummary').textContent = `展开（共 ${DATA.catalogCount} 个目录模型）`;
@@ -368,20 +410,23 @@ function renderCatalog() {
   $('#catBody').innerHTML = list.map((id) => {
     const m = DATA.subscription.find((s) => s.id === id)?.meta;
     const pinnable = id.includes(':free');
-    return `<tr><td class="mono">${id}</td><td>${pinnable ? '<span class="badge green">:free 可精确钉住</span>' : '<span class="badge orange">规划器管理</span>'}</td>
-    <td>${m?.lastProvider ? '<span class="badge">' + m.lastProvider + '</span>' : ''}</td>
-    <td><button class="ghost" onclick="probe('${id}', this)">探测</button></td></tr>`;
+    return `<tr><td class="mono">${escapeHtml(id)}</td><td>${pinnable ? '<span class="badge green">:free 可精确钉住</span>' : '<span class="badge orange">规划器管理</span>'}</td>
+    <td>${m?.lastProvider ? '<span class="badge">' + escapeHtml(m.lastProvider) + '</span>' : ''}</td>
+    <td><button class="ghost" onclick="probe(${jsArg(id)}, this)">探测</button></td></tr>`;
   }).join('') || '<tr><td class="empty">无匹配</td></tr>';
 }
 
 async function loadAll() {
-  const [models, accs, sec, meta] = await Promise.all([api('/api/models'), api('/api/accounts'), api('/api/security'), api('/api/meta')]);
-  DATA = models;
-  ACCS = accs;
-  render();
-  renderAccounts();
-  renderSecurity(sec);
-  $('#noKeyBanner').style.display = meta.configured ? 'none' : 'block';
+  await Promise.all([
+    api('/api/models').then((models) => { DATA = models; render(); }),
+    api('/api/accounts').then((accs) => {
+      ACCS = accs; renderAccounts();
+      $('#accountConcurrency').value = ACCS.accountConcurrency || 1;
+      loadUsage(false).catch(() => {});
+    }),
+    api('/api/security').then(renderSecurity),
+    api('/api/meta').then((meta) => { $('#noKeyBanner').style.display = meta.configured ? 'none' : 'block'; }),
+  ]);
 }
 
 function renderSecurity(sec) {
@@ -465,11 +510,11 @@ async function fetchOfficial(btn) {
     el.style.display = 'block';
     el.innerHTML = `<div class="kvs">
       <div>拉取时间 <b>${new Date().toLocaleTimeString()}</b></div>
-      <div>来源 <b>${r.sources.join(' + ') || '无可用来源'}</b></div>
+      <div>来源 <b>${escapeHtml(r.sources.join(' + ') || '无可用来源')}</b></div>
       <div>官方清单 <b>${r.found} 个</b></div>
       <div>新增 <b class="${r.added.length ? 'match' : 'dim'}">${r.added.length} 个</b></div>
       <div>合并后 <b>${r.knownModels.length} 个</b></div>
-    </div>${r.added.length ? '✔ 检测到新模型，已加入下方列表并高亮显示：' + r.added.join('、') : '✔ 清单已是最新：官方渠道 ' + r.found + ' 个模型均已覆盖，现有 ' + r.knownModels.length + ' 个订阅模型保持不变。'}`;
+    </div>${r.added.length ? '✔ 检测到新模型，已加入下方列表并高亮显示：' + r.added.map(escapeHtml).join('、') : '✔ 清单已是最新：官方渠道 ' + r.found + ' 个模型均已覆盖，现有 ' + r.knownModels.length + ' 个订阅模型保持不变。'}`;
     await loadAll();
     setTimeout(() => { LAST_ADDED = []; }, 6000);
   } catch (e) {
@@ -508,7 +553,7 @@ function onTestModelChange() {
 // 逐次尝试明细：fireworks(✗429 781ms) → sail-research(✔ 2458ms)
 function traceHtml(trace) {
   if (!trace?.length) return '';
-  const parts = trace.map((t) => `<span class="tr ${t.status === 200 ? 'ok' : 'bad'}">${t.upstream || 'auto'}(${t.status === 200 ? '✔' : '✗' + t.status} ${t.ms}ms${t.note && t.status !== 200 && t.note !== 'ok' ? ' · ' + escapeHtml(String(t.note).slice(0, 60)) : ''})</span>`);
+  const parts = trace.map((t) => `<span class="tr ${t.status === 200 ? 'ok' : 'bad'}">${escapeHtml(t.upstream || 'auto')}(${t.status === 200 ? '✔' : '✗' + escapeHtml(t.status)} ${escapeHtml(t.ms)}ms${t.note && t.status !== 200 && t.note !== 'ok' ? ' · ' + escapeHtml(String(t.note).slice(0, 60)) : ''})</span>`);
   return `<div class="trace">尝试序列：${parts.join(' → ')}</div>`;
 }
 
@@ -522,13 +567,13 @@ function showTest(r, model, target) {
   const hit = !targets.length || r.actual === targets[0];
   const hitExcluded = Array.isArray(r.exclude) && r.exclude.length && r.exclude.includes(r.actual);
   el.innerHTML = `<div class="kvs">
-      <div>模型 <b class="mono">${model}</b></div>
-      <div>目标上游 <b>${targets.length ? targets.join(' → ') : '自动'}</b></div>
-      <div>实际上游 <b class="${hit && !hitExcluded ? 'match' : 'mismatch'}">${r.actual || '未知'}</b></div>
+      <div>模型 <b class="mono">${escapeHtml(model)}</b></div>
+      <div>目标上游 <b>${targets.length ? targets.map(escapeHtml).join(' → ') : '自动'}</b></div>
+      <div>实际上游 <b class="${hit && !hitExcluded ? 'match' : 'mismatch'}">${escapeHtml(r.actual || '未知')}</b></div>
       <div>耗时 <b>${r.ms} ms</b></div>
     </div>${traceHtml(r.trace)}
-    ${hitExcluded ? `<div class="mismatch">⚠ 排除未生效：命中了被排除的上游 ${r.actual}（该渠道可能不在本地已知清单内，或网关未遵守白名单；先点「探测」刷新渠道列表再试）</div>` : hit ? '✔ 上游匹配，选择已生效。' : (r.actual ? '✘ 未命中首个目标上游：渠道可能限流或不可钉（点「校验」检查全部渠道）；严格模式失败会直接报错，可改用「优先+回退」。' : '该模型响应未携带上游信息，无法回读实际上游。')}
-    <div class="dim" style="margin-top:6px">回复：${escapeHtml(r.content || '(空)')}　·　背后模型：${r.canonicalSlug || '—'}　·　管道：${r.pipeline === 'direct' ? '直连(OpenRouter)' : r.pipeline === 'planner' ? '规划器(Vercel)' : '未知'}</div>`;
+    ${hitExcluded ? `<div class="mismatch">⚠ 排除未生效：命中了被排除的上游 ${escapeHtml(r.actual)}（该渠道可能不在本地已知清单内，或网关未遵守白名单；先点「探测」刷新渠道列表再试）</div>` : hit ? '✔ 上游匹配，选择已生效。' : (r.actual ? '✘ 未命中首个目标上游：渠道可能限流或不可钉（点「校验」检查全部渠道）；严格模式失败会直接报错，可改用「优先+回退」。' : '该模型响应未携带上游信息，无法回读实际上游。')}
+    <div class="dim" style="margin-top:6px">回复：${escapeHtml(r.content || '(空)')}　·　背后模型：${escapeHtml(r.canonicalSlug || '—')}　·　管道：${r.pipeline === 'direct' ? '直连(OpenRouter)' : r.pipeline === 'planner' ? '规划器(Vercel)' : '未知'}</div>`;
 }
 
 // —— perModel 配置保存：POST 完整字段（upstreams + exclude 一起），UI 由调用方乐观更新 ——
@@ -571,7 +616,7 @@ function updateRowUi(id) {
   const cfg = s.config;
   const selected = cfg.upstreams || [];
   const excSet = new Set(cfg.exclude || []);
-  const tr = document.querySelector(`#subBody tr[data-id="${id}"]`);
+  const tr = [...document.querySelectorAll('#subBody tr[data-id]')].find((row) => row.dataset.id === id);
   if (!tr) return render();
   tr.querySelectorAll('.uprow').forEach((row) => {
     const u = row.dataset.u;
@@ -580,11 +625,11 @@ function updateRowUi(id) {
     const pills = row.querySelectorAll('.pill');
     if (pills[0]) {
       pills[0].classList.toggle('prio-on', no >= 0);
-      pills[0].setAttribute('onclick', `toggleUp('${id}','sel','${u}',${no >= 0 ? 'false' : 'true'})`);
+      pills[0].setAttribute('onclick', `toggleUp(${JSON.stringify(id)},'sel',${JSON.stringify(u)},${no >= 0 ? 'false' : 'true'})`);
     }
     if (pills[1]) {
       pills[1].classList.toggle('excl-on', isEx);
-      pills[1].setAttribute('onclick', `toggleUp('${id}','excl','${u}',${isEx ? 'false' : 'true'})`);
+      pills[1].setAttribute('onclick', `toggleUp(${JSON.stringify(id)},'excl',${JSON.stringify(u)},${isEx ? 'false' : 'true'})`);
     }
     row.classList.toggle('excluded', isEx);
     row.querySelector('.upno').textContent = no >= 0 ? String(no + 1) : '';
@@ -654,32 +699,35 @@ function bulkUp(id, action) {
 async function loadHistory() {
   const { history } = await api('/api/history');
   $('#histBody').innerHTML = history.length ? history.map((h) => `<tr>
-      <td>${fmt(h.ts)}</td><td class="mono">${h.model}</td>
-      <td>${h.account ? '<span class="badge">' + h.account + '</span>' : '<span class="dim">—</span>'}</td>
-      <td>${h.provider ? '<span class="badge">' + h.provider + '</span>' : '<span class="dim">—</span>'}</td>
-      <td class="mono dim">${h.canonical || '—'}</td>
+      <td>${fmt(h.ts)}</td><td class="mono">${escapeHtml(h.model)}</td>
+      <td>${h.account ? '<span class="badge">' + escapeHtml(h.account) + '</span>' : '<span class="dim">—</span>'}</td>
+      <td>${h.provider ? '<span class="badge">' + escapeHtml(h.provider) + '</span>' : '<span class="dim">—</span>'}</td>
+      <td class="mono dim">${escapeHtml(h.canonical || '—')}</td>
       <td>${h.ms ?? '—'} ms</td>
       <td>${h.stream ? '流式' : '非流式'}</td>
-      <td class="dim">${(h.trace || h.attempts || []).map((t) => typeof t === 'string' ? t : `${t.upstream || 'auto'}(${t.status === 200 ? '✔' : '✗'}${t.ms}ms)`).join(' → ') || '—'}</td>
+      <td class="dim">${(h.trace || h.attempts || []).map((t) => escapeHtml(typeof t === 'string' ? t : `${t.upstream || 'auto'}(${t.status === 200 ? '✔' : '✗'}${t.ms}ms)`)).join(' → ') || '—'}</td>
     </tr>`).join('') : '<tr><td colspan="8" class="empty">暂无记录 —— 把客户端 Base URL 指向代理地址即可自动记录</td></tr>';
 }
 
 let ACCS = null;
-const escapeHtml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 function renderAccounts() {
   if (!ACCS) return;
   $('#accMode').value = ACCS.mode;
   const show = $('#accShowKeys').checked;
   const rows = ACCS.accounts.map((a, i) => {
-    const st = (ACCS.stats || {})[a.name] || {};
+    const st = (ACCS.stats || {})[a.id] || (ACCS.stats || {})[a.name] || {};
     const checked = ACCS.mode === 'single' && i === ACCS.active;
+    const slot = a.concurrency || {};
     return `<tr>
+      <td><input type="checkbox" class="accSelect" data-i="${i}" title="选中后批量测试"></td>
       <td><input type="radio" name="accActive" data-i="${i}" ${checked ? 'checked' : ''} ${ACCS.mode !== 'single' ? 'disabled title="轮询模式下按顺序轮流使用"' : 'title="单账号模式下使用此账号"'}></td>
       <td><input class="accName" data-i="${i}" value="${escapeHtml(a.name)}" style="width:110px; background:var(--card2); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:5px 8px; font-size:12.5px"></td>
       <td><input class="accKey" data-i="${i}" type="${show ? 'text' : 'password'}" value="${escapeHtml(a.key)}" style="width:100%; min-width:280px; background:var(--card2); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:5px 8px; font-family:Consolas, monospace; font-size:12px"></td>
       <td><input type="checkbox" class="accEnabled" data-i="${i}" ${a.enabled !== false ? 'checked' : ''}></td>
       <td>${st.requests ?? 0}${st.lastError ? '<div class="mismatch" style="font-size:11px">最近有错误</div>' : ''}</td>
+      <td>${(st.tokens || 0).toLocaleString()}</td>
+      <td class="dim" style="font-size:12px">${slot.active ?? 0}/${slot.limit || ACCS.accountConcurrency || 1}${slot.queued ? ` <span class="badge orange">排队 ${slot.queued}</span>` : ''}</td>
       <td class="dim" style="font-size:12px">${st.lastUsed ? fmt(st.lastUsed) : '—'}</td>
       <td><div class="row-actions">
         <button class="ghost" onclick="testAccount(${i}, this)">测试</button>
@@ -687,27 +735,29 @@ function renderAccounts() {
       </div></td>
     </tr>`;
   }).join('');
-  $('#accBody').innerHTML = rows || '<tr><td colspan="7" class="empty">暂无账号，点击「＋ 添加账号」</td></tr>';
+  $('#accBody').innerHTML = rows || '<tr><td colspan="10" class="empty">暂无账号，点击「＋ 添加账号」</td></tr>';
 }
 
 // 把 DOM 里当前编辑值收回 ACCS（避免重渲染丢输入）
 function collectAccounts() {
   const mode = $('#accMode').value;
   const accs = ACCS.accounts.map((a, i) => ({
+    id: a.id,
     name: document.querySelector(`.accName[data-i="${i}"]`)?.value?.trim() || a.name,
     key: document.querySelector(`.accKey[data-i="${i}"]`)?.value?.trim() || '',
     enabled: document.querySelector(`.accEnabled[data-i="${i}"]`)?.checked !== false,
   }));
   const checked = document.querySelector('input[name="accActive"]:checked');
   const active = checked ? parseInt(checked.dataset.i) : Math.min(ACCS.active ?? 0, Math.max(0, accs.length - 1));
-  return { accounts: accs, mode, active };
+  const accountConcurrency = Math.min(32, Math.max(1, Math.trunc(Number($('#accountConcurrency').value) || 1)));
+  return { accounts: accs, mode, active, accountConcurrency };
 }
 
 async function saveAccounts() {
   const payload = collectAccounts();
   if (!payload.accounts.filter((a) => a.key).length) { accMsg('至少需要一个 key 非空的账号', true); return; }
   const r = await api('/api/accounts', payload);
-  if (r.ok) { accMsg(`已保存：${r.accounts} 个账号 · ${r.mode === 'roundrobin' ? '轮询' : '单账号'}模式`); await loadAll(); }
+  if (r.ok) { accMsg(`已保存：${r.accounts} 个账号 · ${r.mode === 'roundrobin' ? '轮询' : '单账号'}模式 · 每账号并发 ${r.accountConcurrency}`); await loadAll(); }
   else accMsg(r.error?.message || '保存失败', true);
 }
 
@@ -727,12 +777,75 @@ function delAccount(i) {
   renderAccounts();
 }
 
+function importAccounts() {
+  const text = $('#bulkAccounts').value.trim();
+  if (!text) { accMsg('请先粘贴账号内容', true); return; }
+  let parsed = [];
+  try {
+    const json = JSON.parse(text);
+    if (Array.isArray(json)) parsed = json.map((a) => typeof a === 'string' ? { key: a } : a);
+  } catch { /* 普通逐行格式 */ }
+  if (!parsed.length) {
+    parsed = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
+      const parts = line.split(/\t|\s*,\s*/);
+      if (parts.length >= 2 && parts[1].trim()) return { name: parts[0].trim(), key: parts.slice(1).join(',').trim() };
+      return { key: line };
+    });
+  }
+  const cur = collectAccounts();
+  const seen = new Set(cur.accounts.map((a) => a.key).filter(Boolean));
+  let added = 0;
+  parsed.forEach((a) => {
+    const key = String(a?.key || a?.apiKey || '').trim();
+    if (!key || seen.has(key)) return;
+    seen.add(key); cur.accounts.push({ name: String(a?.name || `账号${cur.accounts.length + 1}`).slice(0, 50), key, enabled: a?.enabled !== false }); added++;
+  });
+  if (!added) { accMsg('没有发现新的有效 key（重复账号已跳过）', true); return; }
+  ACCS.accounts = cur.accounts; ACCS.mode = cur.mode; ACCS.active = cur.active; ACCS.accountConcurrency = cur.accountConcurrency;
+  renderAccounts();
+  $('#bulkAccounts').value = '';
+  accMsg(`已导入 ${added} 个账号，请保存配置`);
+}
+
+async function testSelectedAccounts() {
+  const current = collectAccounts();
+  ACCS.accounts = current.accounts; ACCS.mode = current.mode; ACCS.active = current.active; ACCS.accountConcurrency = current.accountConcurrency;
+  const indexes = [...document.querySelectorAll('.accSelect:checked')].map((el) => Number(el.dataset.i));
+  const selected = indexes.map((i) => ACCS.accounts[i]).filter((a) => a?.key);
+  if (!selected.length) { accMsg('请先勾选要测试的账号', true); return; }
+  const box = $('#batchTestMsg'); box.style.display = 'block'; box.textContent = `正在测试 ${selected.length} 个账号…`;
+  const r = await api('/api/accounts/test-batch', { accounts: selected.map((a) => ({ id: a.id, key: a.key })) });
+  const results = r.results || [];
+  box.innerHTML = results.map((x) => `<div class="${x.ok ? 'match' : 'mismatch'}">${x.ok ? '✔' : '✘'} ${escapeHtml(selected[x.index]?.name || `账号${x.index + 1}`)} · ${x.ok ? `${x.ms} ms` : escapeHtml(x.error || '失败')}</div>`).join('') || '没有返回结果';
+}
+
+function usageNumber(value, unit) {
+  return value == null ? '—' : `${Number(value).toLocaleString()} ${escapeHtml(unit || '')}`.trim();
+}
+function renderUsage(items) {
+  $('#usageBody').innerHTML = (items || []).map((u) => {
+    const pct = u.limit > 0 && u.used != null ? Math.min(100, Math.max(0, u.used / u.limit * 100)) : 0;
+    return `<tr><td><span class="badge">${escapeHtml(u.account)}</span></td><td>${usageNumber(u.used, u.unit)}${u.limit > 0 ? `<div class="usage-bar"><i style="width:${pct}%"></i></div>` : ''}</td><td>${usageNumber(u.limit, u.unit)}</td><td class="${u.ok ? 'match' : 'dim'}">${u.ok ? usageNumber(u.remaining, u.unit) : '不可用'}</td><td class="dim">${u.resetAt ? escapeHtml(new Date(u.resetAt).toLocaleString()) : '—'}</td><td class="dim" style="font-size:11px">${u.ok ? escapeHtml(u.source || '') : escapeHtml(u.error || '接口未返回额度')}</td></tr>`;
+  }).join('') || '<tr><td colspan="6" class="empty">暂无账号</td></tr>';
+}
+async function loadUsage(force = false) {
+  const btn = $('#usageRefreshBtn');
+  if (force) { btn.disabled = true; btn.textContent = '读取中…'; }
+  try {
+    const r = await api(`/api/accounts/usage${force ? '?refresh=1' : ''}`);
+    renderUsage(r.usage || []);
+    $('#usageStatus').textContent = `更新于 ${new Date(r.checkedAt || Date.now()).toLocaleTimeString()} · 超出并发上限的请求会进入该账号队列`;
+  } catch (e) { $('#usageStatus').textContent = '额度读取失败，请稍后重试'; }
+  if (force) { btn.disabled = false; btn.textContent = '↻ 刷新额度'; }
+}
+
 async function testAccount(i, btn) {
-  collectAccounts();
+  const current = collectAccounts();
+  ACCS.accounts = current.accounts; ACCS.mode = current.mode; ACCS.active = current.active; ACCS.accountConcurrency = current.accountConcurrency;
   const acc = ACCS.accounts[i];
   if (!acc.key) { accMsg('请先填写该账号的 key', true); return; }
   btn.disabled = true; btn.textContent = '测试中…'; accMsg(`正在测试 ${acc.name} …`);
-  const r = await api('/api/accounts/test', { key: acc.key });
+  const r = await api('/api/accounts/test', { id: acc.id, key: acc.key });
   btn.disabled = false; btn.textContent = '测试';
   accMsg(r.ok ? `✔ ${acc.name} 可用（${r.ms} ms）${r.note ? ' · ' + r.note : ''}` : `✘ ${acc.name} 不可用：${r.error}`, !r.ok);
 }
@@ -750,6 +863,16 @@ function accMsg(msg, isErr) {
   el._t = setTimeout(() => { el.textContent = ''; }, 8000);
 }
 
+let currentPage = localStorage.getItem('cps_page') || 'overview';
+function switchPage(page, button) {
+  if (!document.querySelector(`[data-page-tab="${page}"]`)) page = 'overview';
+  currentPage = page;
+  localStorage.setItem('cps_page', page);
+  document.querySelectorAll('[data-page]').forEach((el) => el.classList.toggle('page-hidden', el.dataset.page !== page));
+  document.querySelectorAll('[data-page-tab]').forEach((el) => el.classList.toggle('active', el.dataset.pageTab === page));
+  if (button) button.blur();
+}
+
 let statusTimer;
 function status(msg) { $('#status').textContent = msg; clearTimeout(statusTimer); statusTimer = setTimeout(() => $('#status').textContent = '', 6000); }
 
@@ -757,6 +880,7 @@ $('#proxyBase').onclick = () => navigator.clipboard.writeText(DATA.proxyBase).th
 $('#testModel').addEventListener('change', onTestModelChange);
 $('#catFilter').addEventListener('input', renderCatalog);
 $('#loginKey').addEventListener('keydown', (e) => { if (e.key === 'Enter') tryLogin(); });
+switchPage(currentPage);
 // 仅当服务端开启鉴权且本地没有已保存的密钥时才弹登录框
 (async () => {
   try {

@@ -8,6 +8,7 @@
   "accounts": [],
   "accountMode": "single",
   "activeAccount": 0,
+  "accountConcurrency": 1,
   "knownModels": [
     "cline-pass/glm-5.3-flash",
     "cline-pass/kimi-k3",

@@ -6,9 +6,11 @@
 //   由其规划器在系统凭证上游中自行挑选，响应元数据可回读实际上游。
 // - 目录模型 :free 变体：provider.only 真正透传到 OpenRouter，可精确钉住。
 import http from 'node:http';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { Readable, Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -27,6 +29,7 @@ const DEFAULT_CONFIG = {
   accounts: [],            // { name, key, enabled } —— Cline Pass 账号池
   accountMode: 'single',   // single=手动指定 | roundrobin=轮询
   activeAccount: 0,        // single 模式下使用的账号下标
+  accountConcurrency: 1,   // 每个账号同时允许的上游请求数
   knownModels: [
     'cline-pass/glm-5.3-flash',
     'cline-pass/kimi-k3',
@@ -61,7 +64,15 @@ function loadJson(file, fallback) {
 }
 const config = { ...DEFAULT_CONFIG, ...loadJson(CONFIG_PATH, {}) };
 const META = loadJson(META_PATH, { models: {}, history: [], catalog: null, orModelsFetchedAt: 0, orModelList: null });
-const saveConfig = () => fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
+// 来自配置、上游响应的名称会被用作字典键；使用无原型对象避免 __proto__/constructor 污染。
+config.perModel = Object.assign(Object.create(null), config.perModel || {});
+META.models = Object.assign(Object.create(null), META.models || {});
+META.stats = Object.assign(Object.create(null), META.stats || {});
+META.accountUsage = Object.assign(Object.create(null), META.accountUsage || {});
+const saveConfig = () => {
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 });
+  fs.chmodSync(CONFIG_PATH, 0o600);
+};
 const saveMeta = () => fs.writeFileSync(META_PATH, JSON.stringify(META, null, 2));
 // 旧版单 apiKey 迁移为账号池
 if ((!Array.isArray(config.accounts) || config.accounts.length === 0) && config.apiKey) {
@@ -71,6 +82,8 @@ if ((!Array.isArray(config.accounts) || config.accounts.length === 0) && config.
   saveConfig();
 }
 config.accountMode = config.accountMode === 'roundrobin' ? 'roundrobin' : 'single';
+const concurrencyLimit = (v) => Math.min(32, Math.max(1, Math.trunc(Number(v) || 1)));
+config.accountConcurrency = concurrencyLimit(config.accountConcurrency);
 
 // perModel 配置升级：旧版单 upstream 迁移为有序多上游列表（upstream 保留为回滚兼容镜像）
 (function migratePerModel() {
@@ -95,6 +108,12 @@ if (process.env.CLINE_PASS_KEY) {
 if (process.env.PROXY_KEY && process.env.PROXY_KEY.trim()) config.proxyKey = process.env.PROXY_KEY.trim();
 if (process.env.PUBLIC_BASE_URL) config.publicBaseUrl = process.env.PUBLIC_BASE_URL.trim();
 if (process.env.PORT) config.port = Number(process.env.PORT) || config.port;
+const BIND_HOST = process.env.BIND_HOST || '127.0.0.1';
+if (!config.proxyKey && !['127.0.0.1', '::1', 'localhost'].includes(BIND_HOST)) {
+  config.proxyKey = crypto.randomBytes(24).toString('base64url');
+  saveConfig();
+  console.warn(`[安全] 非本机绑定已自动生成代理密钥，请妥善保存：${config.proxyKey}`);
+}
 
 function isConfigured() {
   return !!config.apiKey || enabledAccounts().length > 0;
@@ -105,8 +124,145 @@ if (!isConfigured()) {
 
 // 账号选择：roundrobin 在启用的账号间轮询；single 使用 activeAccount 指定的账号
 let RR_COUNTER = 0;
+// 每个账号独立的并发槽位。默认每个账号同时只执行 1 个上游请求，
+// 轮询模式下不同账号仍可并行；等待中的请求会在槽位释放后继续。
+const ACCOUNT_SLOTS = new Map();
+function accountSlotState(acc) {
+  const key = String(acc?.key || 'default');
+  let state = ACCOUNT_SLOTS.get(key);
+  if (!state) { state = { key, active: 0, queue: [] }; ACCOUNT_SLOTS.set(key, state); }
+  return state;
+}
+function drainAccountSlots(state) {
+  const limit = concurrencyLimit(config.accountConcurrency);
+  while (state.active < limit && state.queue.length) {
+    const waiter = state.queue.shift();
+    if (waiter.signal?.aborted) { waiter.reject(new Error('request aborted while waiting for account slot')); continue; }
+    state.active++;
+    if (waiter.signal) waiter.signal.removeEventListener('abort', waiter.onAbort);
+    waiter.resolve(() => {
+      if (waiter.released) return;
+      waiter.released = true;
+      state.active = Math.max(0, state.active - 1);
+      drainAccountSlots(state);
+      if (!state.active && !state.queue.length) ACCOUNT_SLOTS.delete(state.key);
+    });
+  }
+}
+function acquireAccountSlot(acc, signal) {
+  const state = accountSlotState(acc);
+  return new Promise((resolve, reject) => {
+    if (state.queue.length >= 100) return reject(new Error('account request queue is full'));
+    const waiter = { resolve, reject, signal, released: false, onAbort: null };
+    if (signal?.aborted) return reject(new Error('request aborted while waiting for account slot'));
+    waiter.onAbort = () => {
+      const i = state.queue.indexOf(waiter);
+      if (i >= 0) state.queue.splice(i, 1);
+      reject(new Error('request aborted while waiting for account slot'));
+    };
+    if (signal) signal.addEventListener('abort', waiter.onAbort, { once: true });
+    state.queue.push(waiter);
+    drainAccountSlots(state);
+  });
+}
+function accountSlotSnapshot(acc) {
+  const s = accountSlotState(acc);
+  return { active: s.active, queued: s.queue.length, limit: concurrencyLimit(config.accountConcurrency) };
+}
+async function fetchJSONWithAccount(acc, url, opts = {}, timeoutMs = 60000) {
+  let release;
+  try {
+    release = await acquireAccountSlot(acc);
+    return await fetchJSON(url, opts, timeoutMs);
+  } finally { release?.(); }
+}
+
+const firstNumber = (...values) => {
+  for (const v of values) {
+    if (typeof v === 'number' && Number.isFinite(v)) return v;
+    if (typeof v === 'string' && v.trim() && Number.isFinite(Number(v))) return Number(v);
+  }
+  return null;
+};
+function normalizeUsage(json, source) {
+  const root = json?.data && typeof json.data === 'object' ? json.data : json;
+  const d = root?.usage && typeof root.usage === 'object' ? { ...root, ...root.usage } : root;
+  if (!d || typeof d !== 'object') return null;
+  const used = firstNumber(d.used, d.usedCredits, d.creditsUsed, d.quotaUsed, d.consumed, d.spent, d.totalUsage, d.usageUsed, d.inputUsed, d.tokensUsed);
+  const limit = firstNumber(d.limit, d.quota, d.max, d.total, d.totalCredits, d.creditsLimit, d.quotaLimit, d.monthlyLimit, d.usageLimit);
+  let remaining = firstNumber(d.remaining, d.remainingCredits, d.creditsRemaining, d.quotaRemaining, d.left, d.available, d.balance);
+  if (remaining == null && used != null && limit != null) remaining = Math.max(0, limit - used);
+  const resetAt = d.resetAt || d.reset_at || d.nextReset || d.periodEnd || d.period_end || null;
+  const unit = d.unit || d.currency || (String(d.tokens || '').toLowerCase().includes('token') ? 'tokens' : 'credits');
+  if (used == null && limit == null && remaining == null && !resetAt) return null;
+  return { used, limit, remaining, resetAt, unit: String(unit), source };
+}
+async function fetchAccountUsage(acc, force = false) {
+  META.accountUsage = META.accountUsage || {};
+  const cacheKey = crypto.createHash('sha256').update(acc.key).digest('hex');
+  const cached = META.accountUsage[cacheKey];
+  if (!force && cached && Date.now() - cached.checkedAt < 30000) return { ...cached, account: acc.name };
+  let result;
+  let error;
+  let release;
+  try {
+    release = await acquireAccountSlot(acc);
+    const me = await fetchJSON(`${config.upstreamBase}/users/me`, { headers: chatHeaders(acc.key) }, 10000);
+    const user = me.json?.data || me.json;
+    const id = user?.uid || user?.id;
+    if (me.status === 401 || me.status === 403) {
+      error = '此 API Key 无权读取 Cline 账户资料；需账户登录令牌才能查询官方余额';
+    } else if (me.status !== 200 || !id) {
+      error = `账户资料接口不可用（HTTP ${me.status}）`;
+    } else {
+      const path = `/users/${encodeURIComponent(String(id))}/balance`;
+      const balance = await fetchJSON(`${config.upstreamBase}${path}`, { headers: chatHeaders(acc.key) }, 10000);
+      if (balance.status === 200) {
+        result = normalizeUsage(balance.json, path);
+        if (result) result = { ...result, unit: 'credits' };
+        else error = '官方余额接口未返回可识别的余额字段';
+      } else if (balance.status === 401 || balance.status === 403) {
+        error = '此 API Key 无权读取 Cline 账户余额；需账户登录令牌';
+      } else error = `官方余额接口不可用（HTTP ${balance.status}）`;
+    }
+  } catch (e) { error = e.message; }
+  finally { release?.(); }
+  const out = result
+    ? { ...result, ok: true, checkedAt: Date.now(), account: acc.name }
+    : { ok: false, account: acc.name, checkedAt: Date.now(), error: error || '额度不可用' };
+  META.accountUsage[cacheKey] = { ...out };
+  saveMeta();
+  return out;
+}
 function enabledAccounts() {
   return (config.accounts || []).filter((a) => a && a.key && a.enabled !== false);
+}
+const MASKED_ACCOUNT_KEY = '••••••••';
+function accountId(key) {
+  return crypto.createHash('sha256').update(String(key || '')).digest('hex');
+}
+function maskAccountKey(key) {
+  return key ? MASKED_ACCOUNT_KEY : '';
+}
+// 旧版本按名称累计统计；名称唯一时迁移到稳定的账号 ID。
+for (const acc of config.accounts || []) {
+  if (!acc?.key || !acc?.name) continue;
+  const id = accountId(acc.key);
+  if ((config.accounts || []).filter((a) => a?.name === acc.name).length === 1 && META.stats[acc.name] && !META.stats[id]) {
+    META.stats[id] = META.stats[acc.name];
+    delete META.stats[acc.name];
+    saveMeta();
+  }
+}
+function resolveStoredAccount(bodyAccount, index) {
+  const candidate = String(bodyAccount?.key || '').trim();
+  const id = String(bodyAccount?.id || '').trim();
+  const old = id
+    ? (config.accounts || []).find((a) => accountId(a.key) === id)
+    : config.accounts?.[index];
+  // 页面回传脱敏占位符时保留服务端原密钥；只有用户输入新值才替换。
+  const key = old?.key && candidate === maskAccountKey(old.key) ? old.key : candidate;
+  return { ...bodyAccount, key, old };
 }
 function pickAccount() {
   const list = enabledAccounts();
@@ -226,7 +382,7 @@ async function harvestAvailableProviders(modelId, pipeline) {
   const body = pipeline === 'planner'
     ? { ...base, providerOptions: { gateway: { only: ['__probe__'] } } }
     : { ...base, provider: { only: ['__probe__'] } };
-  const { json } = await fetchJSON(`${config.upstreamBase}/chat/completions`, { method: 'POST', headers: chatHeaders(acc.key), body: JSON.stringify(body) }, 60000);
+  const { json } = await fetchJSONWithAccount(acc, `${config.upstreamBase}/chat/completions`, { method: 'POST', headers: chatHeaders(acc.key), body: JSON.stringify(body) }, 60000);
   const err = json?.error;
   if (typeof err !== 'string') return null;
   if (pipeline === 'planner') {
@@ -252,7 +408,7 @@ async function probeModel(modelId) {
   const acc = pickAccount();
   const t0 = Date.now();
   const body = { model: modelId, messages: [{ role: 'user', content: 'Reply with the word OK' }], max_tokens: 256 };
-  const { json } = await fetchJSON(`${config.upstreamBase}/chat/completions`, {
+  const { json } = await fetchJSONWithAccount(acc, `${config.upstreamBase}/chat/completions`, {
     method: 'POST',
     headers: chatHeaders(acc.key),
     body: JSON.stringify(body),
@@ -346,7 +502,7 @@ async function validateUpstreams(modelId) {
       const body = pipeline === 'planner'
         ? { ...base, providerOptions: { gateway: { only: [slug] } } }
         : { ...base, provider: { only: [slug] } };
-      const { json } = await fetchJSON(`${config.upstreamBase}/chat/completions`, {
+      const { json } = await fetchJSONWithAccount(acc, `${config.upstreamBase}/chat/completions`, {
         method: 'POST', headers: chatHeaders(acc.key), body: JSON.stringify(body),
       }, 60000).catch(() => ({ json: { error: 'network error' } }));
       let status = 'unknown';
@@ -418,24 +574,27 @@ function record(modelId, info) {
   if (META.history.length > 100) META.history.length = 100;
   if (info.account) {
     META.stats = META.stats || {};
-    const st = (META.stats[info.account] ||= { requests: 0, lastUsed: 0, lastError: null });
+    const st = (META.stats[info.accountId || info.account] ||= { requests: 0, lastUsed: 0, lastError: null, tokens: 0 });
     st.requests += 1;
     st.lastUsed = Date.now();
     st.lastError = info.error || null;
+    st.tokens = (st.tokens || 0) + (firstNumber(info.usage?.total_tokens, info.usage?.totalTokens) || 0);
   }
   saveMeta();
 }
 
 // ---------- 聊天代理 ----------
 const CHAT_PATHS = new Set(['/chat/completions', '/v1/chat/completions', '/api/v1/chat/completions']);
+const validModelId = (v) => typeof v === 'string' && v.length <= 200 && /^[a-z0-9][a-z0-9._:/+@-]*$/i.test(v) && !['constructor', 'prototype', '__proto__'].includes(v);
+const validUpstream = (v) => typeof v === 'string' && v.length <= 80 && /^[a-z0-9][a-z0-9-]*$/i.test(v);
 
-function readBody(req) {
+function readBody(req, maxBytes = 1024 * 1024) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
     req.on('data', (c) => {
       size += c.length;
-      if (size > 50 * 1024 * 1024) { reject(new Error('body too large')); req.destroy(); return; }
+      if (size > maxBytes) { reject(new Error('body too large')); req.destroy(); return; }
       chunks.push(c);
     });
     req.on('end', () => resolve(Buffer.concat(chunks)));
@@ -510,8 +669,8 @@ function injectPrefs(body, modelId, { upstream, orderRest = [], excludeList = []
 // - 勾选了上游（排除后非空）：逐个尝试，排除的永不在候选中
 // - 未勾选：单候选自动模式，排除换算成 only 白名单注入（见 injectPrefs）
 function buildAttempts(modelId, cfg) {
-  const listed = (cfg?.upstreams || []).filter((u) => typeof u === 'string' && u);
-  const exclude = (cfg?.exclude || []).filter((u) => typeof u === 'string' && u);
+  const listed = (Array.isArray(cfg?.upstreams) ? cfg.upstreams : []).filter(validUpstream).slice(0, 10);
+  const exclude = (Array.isArray(cfg?.exclude) ? cfg.exclude : []).filter(validUpstream).slice(0, 10);
   const excl = new Set(exclude);
   const wanted = listed.filter((u) => !excl.has(u));
   const strict = (cfg?.pinMode || 'strict') === 'strict';
@@ -532,7 +691,9 @@ const errText = (e) => (e == null ? '' : typeof e === 'string' ? e : JSON.string
 async function attemptOnce(modelId, body, attempt, signal) {
   const send = injectPrefs(body, modelId, attempt);
   const acc = pickAccount();
+  let release;
   try {
+    release = await acquireAccountSlot(acc, signal);
     const res = await fetch(`${config.upstreamBase}/chat/completions`, {
       method: 'POST', headers: chatHeaders(acc.key), body: JSON.stringify(send), signal,
     });
@@ -542,6 +703,8 @@ async function attemptOnce(modelId, body, attempt, signal) {
     return { status, out, routing, netError: null, acc };
   } catch (e) {
     return { status: 502, out: { error: { message: `upstream fetch failed: ${e.message}`, type: 'upstream_error' } }, routing: {}, netError: e.message, acc };
+  } finally {
+    release?.();
   }
 }
 
@@ -564,6 +727,7 @@ async function runChatChain(req, body, modelId, cfg, { stream = false, attemptTi
       const ctrl = new AbortController();
       activeCtrl = ctrl;
       const timer = setTimeout(() => ctrl.abort(), attemptTimeoutMs);
+      let release;
       try {
         if (stream) {
           const send = injectPrefs(body, modelId, attempt);
@@ -571,6 +735,7 @@ async function runChatChain(req, body, modelId, cfg, { stream = false, attemptTi
           let up = null;
           let netError = null;
           try {
+            release = await acquireAccountSlot(acc, ctrl.signal);
             up = await fetch(`${config.upstreamBase}/chat/completions`, { method: 'POST', headers: chatHeaders(acc.key), body: JSON.stringify(send), signal: ctrl.signal });
           } catch (e) { netError = e.message; }
           const ctype = up?.headers?.get('content-type') || '';
@@ -621,17 +786,19 @@ async function runChatChain(req, body, modelId, cfg, { stream = false, attemptTi
             if (attempt.upstream) learnUpstreamStatus(modelId, attempt.upstream, msg);
             if (!attempt.upstream && (attempt.excludeList || []).length) learnAvailableProviders(modelId, msg);
             last = { status: json?.error ? 502 : up.status, out: json || { error: { message: text.slice(0, 400) || netError, type: 'upstream_error' } }, routing: parseRouting(json || {}), acc, netError: null };
+            release?.();
             continue; // 错误：还未向客户端写任何字节，可切换下一候选
           }
           if (!up) {
             trace.push({ upstream: attempt.upstream, status: 502, ms, note: netError || 'no response' });
             last = { status: 502, out: { error: { message: `upstream fetch failed: ${netError || 'no response'}`, type: 'upstream_error' } }, routing: {}, acc, netError: netError || 'no response' };
+            release?.();
             continue;
           }
           // 真 SSE：firstChunk 与剩余 body 串联透传（SSE 开始后无法重试）；close 钩子保留用于客户端断开时中止上游
           keepCloseHook = true;
           trace.push({ upstream: attempt.upstream, status: 200, ms, note: 'stream' });
-          return { status: 200, streamUp: up, streamHead: firstChunk, acc, trace, t0 };
+          return { status: 200, streamUp: up, streamHead: firstChunk, acc, trace, t0, slotRelease: release, streamAbort: () => ctrl.abort() };
         }
         // 非流式
         const r = await attemptOnce(modelId, body, attempt, ctrl.signal);
@@ -644,6 +811,7 @@ async function runChatChain(req, body, modelId, cfg, { stream = false, attemptTi
         if (r.status === 200) break;
       } finally {
         clearTimeout(timer);
+        if (!keepCloseHook) release?.();
       }
     }
   } finally {
@@ -653,11 +821,11 @@ async function runChatChain(req, body, modelId, cfg, { stream = false, attemptTi
 }
 
 async function handleChat(req, res) {
-  const raw = await readBody(req);
+  const raw = await readBody(req, 50 * 1024 * 1024);
   let body;
   try { body = JSON.parse(raw.toString('utf8')); } catch { return sendJSON(res, 400, { error: { message: 'invalid JSON body' } }); }
   const modelId = body.model;
-  if (!modelId) return sendJSON(res, 400, { error: { message: 'model is required' } });
+  if (!validModelId(modelId)) return sendJSON(res, 400, { error: { message: 'invalid model id' } });
 
   const cfg = config.perModel[modelId] || {};
   const targets = buildAttempts(modelId, cfg).map((a) => a.upstream).filter(Boolean);
@@ -676,16 +844,23 @@ async function handleChat(req, res) {
       'Cache-Control': 'no-cache',
       Connection: 'keep-alive',
       'Access-Control-Allow-Origin': '*',
-      'X-Cline-Target-Upstream': targets.length ? targets.join('>') : 'auto',
+      'X-Cline-Target-Upstream': headerSafe(targets.length ? targets.join('>') : 'auto'),
       'X-Cline-Attempts': String(chain.trace.length),
       'X-Cline-Account': headerSafe(acc.name),
     });
     if (chain.streamHead) res.write(chain.streamHead);
-    const buf = [];
+    let tail = Buffer.alloc(0);
+    let released = false;
+    const releaseSlot = () => { if (!released) { released = true; chain.slotRelease?.(); } };
     const tap = new Transform({
-      transform(c, enc, cb) { buf.push(c); cb(null, c); },
+      transform(c, enc, cb) {
+        // 只保留末尾 64 KiB 用于解析路由元数据，避免长流式回复占满内存。
+        tail = Buffer.concat([tail, c]);
+        if (tail.length > 65536) tail = tail.subarray(tail.length - 65536);
+        cb(null, c);
+      },
       flush(cb) {
-        const text = Buffer.concat(buf).toString('utf8');
+        const text = tail.toString('utf8');
         let provider = null, canonical = null;
         // direct 管道：最后一个 chunk 顶层带 provider（显示名）与 model
         const lines = text.split('\n');
@@ -704,11 +879,16 @@ async function handleChat(req, res) {
           provider = fp ? fp[1] : null;
           canonical = cs ? cs[1] : null;
         }
-        record(modelId, { provider, canonical, ms: Date.now() - t0, stream: true, error: null, account: acc.name, attempts: chain.trace.map((t) => t.upstream || 'auto') });
+        record(modelId, { provider, canonical, ms: Date.now() - t0, stream: true, error: null, account: acc.name, accountId: accountId(acc.key), attempts: chain.trace.map((t) => t.upstream || 'auto') });
+        releaseSlot();
         cb();
       },
     });
-    Readable.fromWeb(up.body).pipe(tap).pipe(res);
+    res.on('close', () => { chain.streamAbort?.(); releaseSlot(); });
+    pipeline(Readable.fromWeb(up.body), tap, res).catch((e) => {
+      releaseSlot();
+      if (!res.destroyed) res.destroy(e);
+    });
     return;
   }
 
@@ -728,13 +908,15 @@ async function handleChat(req, res) {
     trace: chain.trace,
     error: status !== 200 ? out?.error?.message || null : null,
     account: acc ? acc.name : null,
+    accountId: acc ? accountId(acc.key) : null,
+    usage: routing.usage || null,
   });
   res.writeHead(status, {
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': '*',
-    'X-Cline-Target-Upstream': targets.length ? targets.join('>') : 'auto',
-    'X-Cline-Actual-Upstream': routing.finalProvider || 'unknown',
-    'X-Cline-Canonical-Model': routing.canonicalSlug || '',
+    'X-Cline-Target-Upstream': headerSafe(targets.length ? targets.join('>') : 'auto'),
+    'X-Cline-Actual-Upstream': headerSafe(routing.finalProvider || 'unknown'),
+    'X-Cline-Canonical-Model': headerSafe(routing.canonicalSlug || ''),
     'X-Cline-Attempts': String(chain.trace.length),
     'X-Cline-Account': headerSafe(acc ? acc.name : ''),
   });
@@ -749,7 +931,8 @@ function sendJSON(res, status, obj) {
 
 async function catalog() {
   if (META.catalog && Date.now() - (META.catalogFetchedAt || 0) < 3600e3) return META.catalog;
-  const { json } = await fetchJSON(`${config.upstreamBase}/models`, { headers: chatHeaders(pickAccount().key) });
+  const acc = pickAccount();
+  const { json } = await fetchJSONWithAccount(acc, `${config.upstreamBase}/models`, { headers: chatHeaders(acc.key) });
   const ids = (json?.data || []).map((m) => m.id);
   if (ids.length) { META.catalog = ids; META.catalogFetchedAt = Date.now(); saveMeta(); }
   return META.catalog || [];
@@ -758,6 +941,16 @@ async function catalog() {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   const p = url.pathname;
+  if (!PROXY_KEY && ['127.0.0.1', '::1', 'localhost'].includes(BIND_HOST)) {
+    let host = '';
+    try { host = new URL(`http://${req.headers.host || ''}`).hostname.replace(/^\[/, '').replace(/\]$/, ''); } catch {}
+    if (!['127.0.0.1', '::1', 'localhost'].includes(host)) return sendJSON(res, 403, { error: { message: '无鉴权模式仅允许本机主机名' } });
+  }
+  if (!PROXY_KEY && req.headers.origin && (p.startsWith('/api/') || p.startsWith('/v1/') || CHAT_PATHS.has(p))) {
+    try {
+      if (new URL(req.headers.origin).host !== req.headers.host) return sendJSON(res, 403, { error: { message: '无鉴权模式仅允许同源浏览器请求' } });
+    } catch { return sendJSON(res, 403, { error: { message: 'invalid origin' } }); }
+  }
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
@@ -784,19 +977,19 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && p === '/api/probe') {
       const { model } = await JSON.parse(await readBody(req).then((b) => b.toString()));
-      if (!model) return sendJSON(res, 400, { error: 'model required' });
+      if (!validModelId(model)) return sendJSON(res, 400, { error: 'invalid model id' });
       const r = await probeModel(model);
       return sendJSON(res, r.ok ? 200 : 502, r);
     }
     if (req.method === 'POST' && p === '/api/test') {
       // 临时配置可带 upstreams/exclude（数组）或旧版 upstream（单值），完整走故障转移链路
       const { model, upstream, upstreams, exclude } = await JSON.parse(await readBody(req).then((b) => b.toString()));
-      if (!model) return sendJSON(res, 400, { error: 'model required' });
+      if (!validModelId(model)) return sendJSON(res, 400, { error: 'invalid model id' });
       const t0 = Date.now();
       const cfg = { ...(config.perModel[model] || {}) };
-      if (upstreams !== undefined) cfg.upstreams = upstreams;
-      else if (upstream !== undefined) cfg.upstreams = upstream ? [upstream] : [];
-      if (exclude !== undefined) cfg.exclude = exclude;
+      if (upstreams !== undefined) cfg.upstreams = Array.isArray(upstreams) ? upstreams.filter(validUpstream).slice(0, 10) : [];
+      else if (upstream !== undefined) cfg.upstreams = validUpstream(upstream) ? [upstream] : [];
+      if (exclude !== undefined) cfg.exclude = Array.isArray(exclude) ? exclude.filter(validUpstream).slice(0, 10) : [];
       const body = { model, messages: [{ role: 'user', content: 'Reply with the word OK' }], max_tokens: 256 };
       const chain = await runChatChain(req, body, model, cfg, { stream: false, attemptTimeoutMs: 180000 });
       const trace = chain.trace || [];
@@ -807,7 +1000,7 @@ const server = http.createServer(async (req, res) => {
         });
       }
       const r = parseRouting(chain.out);
-      record(model, { provider: r.finalProvider, canonical: r.canonicalSlug, ms: Date.now() - t0, stream: false, attempts: trace.map((t) => t.upstream || 'auto'), error: null, account: chain.acc?.name || null });
+      record(model, { provider: r.finalProvider, canonical: r.canonicalSlug, ms: Date.now() - t0, stream: false, attempts: trace.map((t) => t.upstream || 'auto'), error: null, account: chain.acc?.name || null, accountId: chain.acc ? accountId(chain.acc.key) : null, usage: r.usage || null });
       return sendJSON(res, 200, {
         ok: true, ms: Date.now() - t0,
         targets: (cfg.upstreams || []).filter(Boolean), exclude: cfg.exclude || [],
@@ -818,40 +1011,53 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && p === '/api/accounts') {
       return sendJSON(res, 200, {
-        accounts: config.accounts,
+        accounts: config.accounts.map((a) => ({ id: accountId(a.key), name: a.name, key: maskAccountKey(a.key), enabled: a.enabled !== false, concurrency: accountSlotSnapshot(a) })),
         mode: config.accountMode,
         active: config.activeAccount,
+        accountConcurrency: config.accountConcurrency,
         stats: META.stats || {},
       });
     }
+    if (req.method === 'GET' && p === '/api/accounts/usage') {
+      const force = url.searchParams.get('refresh') === '1';
+      const accounts = (config.accounts || []).filter((a) => a && a.key);
+      const usage = await Promise.all(accounts.map((a) => fetchAccountUsage(a, force)));
+      return sendJSON(res, 200, { ok: true, usage, checkedAt: Date.now() });
+    }
     if (req.method === 'POST' && p === '/api/accounts') {
       const body = JSON.parse(await readBody(req).then((b) => b.toString()));
+      if (!Array.isArray(body.accounts) || body.accounts.length > 200) return sendJSON(res, 400, { error: { message: '账号数量必须在 1–200 之间' } });
       const accs = (Array.isArray(body.accounts) ? body.accounts : [])
-        .map((a, i) => ({
-          name: String(a.name || `账号${i + 1}`).slice(0, 50),
-          key: String(a.key || '').trim(),
-          enabled: a.enabled !== false,
-        }))
+        .map((a, i) => resolveStoredAccount(a, i))
+        .map((a, i) => ({ name: String(a.name || `账号${i + 1}`).slice(0, 50), key: String(a.key || '').trim().slice(0, 1024), enabled: a.enabled !== false }))
         .filter((a) => a.key);
       if (!accs.length) return sendJSON(res, 400, { error: { message: '至少需要一个有效账号（key 非空）' } });
       config.accounts = accs;
       config.accountMode = body.mode === 'roundrobin' ? 'roundrobin' : 'single';
       config.activeAccount = Math.min(Math.max(0, Number(body.active) || 0), accs.length - 1);
+      if (body.accountConcurrency !== undefined) config.accountConcurrency = concurrencyLimit(body.accountConcurrency);
       saveConfig();
       RR_COUNTER = 0;
-      return sendJSON(res, 200, { ok: true, accounts: config.accounts.length, mode: config.accountMode, active: config.activeAccount });
+      return sendJSON(res, 200, { ok: true, accounts: config.accounts.length, mode: config.accountMode, active: config.activeAccount, accountConcurrency: config.accountConcurrency });
     }
     if (req.method === 'POST' && p === '/api/accounts/test') {
-      const { key } = JSON.parse(await readBody(req).then((b) => b.toString()));
-      const k = String(key || '').trim();
+      const input = JSON.parse(await readBody(req).then((b) => b.toString()));
+      const k = resolveStoredAccount(input, -1).key;
       if (!k) return sendJSON(res, 400, { error: { message: 'key required' } });
       const t0 = Date.now();
       const model = config.knownModels[0] || 'cline-pass/glm-5.3-flash';
-      const { json } = await fetchJSON(`${config.upstreamBase}/chat/completions`, {
-        method: 'POST',
-        headers: chatHeaders(k),
-        body: JSON.stringify({ model, messages: [{ role: 'user', content: 'Say OK' }], max_tokens: 512 }),
-      }, 120000);
+      const account = { name: '测试账号', key: k };
+      let release;
+      let json, upstreamStatus;
+      try {
+        release = await acquireAccountSlot(account);
+        ({ json, status: upstreamStatus } = await fetchJSON(`${config.upstreamBase}/chat/completions`, {
+          method: 'POST',
+          headers: chatHeaders(k),
+          body: JSON.stringify({ model, messages: [{ role: 'user', content: 'Say OK' }], max_tokens: 512 }),
+        }, 120000));
+      } finally { release?.(); }
+      if (upstreamStatus === 401 || upstreamStatus === 403) return sendJSON(res, 200, { ok: false, ms: Date.now() - t0, error: '密钥无效或未授权' });
       if (json?.error && !json?.data) {
         const msg = typeof json.error === 'string' ? json.error : JSON.stringify(json.error);
         const authFail = /unauthorized|re-authenticate|invalid\s*api|401/i.test(msg);
@@ -861,14 +1067,50 @@ const server = http.createServer(async (req, res) => {
           ? { ok: false, ms: Date.now() - t0, error: `密钥无效或未授权：${msg.slice(0, 160)}` }
           : { ok: true, ms: Date.now() - t0, model, note: `密钥鉴权通过；网关提示：${msg.slice(0, 120)}` });
       }
+      if (upstreamStatus < 200 || upstreamStatus >= 300 || !(json?.choices || json?.data?.choices))
+        return sendJSON(res, 200, { ok: false, ms: Date.now() - t0, error: `网关响应异常（HTTP ${upstreamStatus}），无法确认密钥有效性` });
       return sendJSON(res, 200, { ok: true, ms: Date.now() - t0, model });
+    }
+    if (req.method === 'POST' && p === '/api/accounts/test-batch') {
+      const body = JSON.parse(await readBody(req).then((b) => b.toString()));
+      const inputs = Array.isArray(body.accounts) ? body.accounts : [];
+      if (inputs.length > 50) return sendJSON(res, 400, { error: { message: '一次最多测试 50 个账号' } });
+      const entries = inputs.map((a, index) => ({ index, key: resolveStoredAccount(a, -1).key })).filter((a) => a.key);
+      if (!entries.length) return sendJSON(res, 400, { error: { message: '至少选择一个有效账号' } });
+      const model = config.knownModels[0] || 'cline-pass/glm-5.3-flash';
+      const results = await Promise.all(entries.map(async ({ key, index }) => {
+        const t0 = Date.now();
+        let release;
+        try {
+          release = await acquireAccountSlot({ name: '批量测试', key });
+          const { json, status: upstreamStatus } = await fetchJSON(`${config.upstreamBase}/chat/completions`, {
+            method: 'POST', headers: chatHeaders(key),
+            body: JSON.stringify({ model, messages: [{ role: 'user', content: 'Say OK' }], max_tokens: 512 }),
+          }, 120000);
+          if (upstreamStatus === 401 || upstreamStatus === 403) return { index, ok: false, ms: Date.now() - t0, error: '密钥无效或未授权', model };
+          if (json?.error && !json?.data) {
+            const msg = typeof json.error === 'string' ? json.error : JSON.stringify(json.error);
+            return { index, ok: !/unauthorized|re-authenticate|invalid\s*api|401/i.test(msg), ms: Date.now() - t0, error: msg.slice(0, 220), model };
+          }
+          if (upstreamStatus < 200 || upstreamStatus >= 300 || !(json?.choices || json?.data?.choices))
+            return { index, ok: false, ms: Date.now() - t0, error: `网关响应异常（HTTP ${upstreamStatus}）`, model };
+          return { index, ok: true, ms: Date.now() - t0, model };
+        } catch (e) { return { index, ok: false, ms: Date.now() - t0, error: e.message, model }; }
+        finally { release?.(); }
+      }));
+      return sendJSON(res, 200, { ok: true, results });
     }
     if (req.method === 'GET' && p === '/api/security') {
       return sendJSON(res, 200, { proxyKey: config.proxyKey || '', publicBaseUrl: config.publicBaseUrl || '', authRequired: !!PROXY_KEY, exposeCatalog: !!config.exposeCatalog });
     }
     if (req.method === 'POST' && p === '/api/security') {
       const body = JSON.parse(await readBody(req).then((b) => b.toString()));
-      if (body.proxyKey !== undefined) config.proxyKey = String(body.proxyKey).trim();
+      if (body.proxyKey !== undefined) {
+        const nextKey = String(body.proxyKey).trim();
+        if (!nextKey && !['127.0.0.1', '::1', 'localhost'].includes(BIND_HOST))
+          return sendJSON(res, 400, { error: { message: '对外监听时必须保留代理密钥' } });
+        config.proxyKey = nextKey;
+      }
       if (body.publicBaseUrl !== undefined) config.publicBaseUrl = String(body.publicBaseUrl).trim().replace(/\/+$/, '');
       if (body.exposeCatalog !== undefined) config.exposeCatalog = !!body.exposeCatalog;
       saveConfig();
@@ -877,7 +1119,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && p === '/api/validate-upstreams') {
       const { model } = JSON.parse(await readBody(req).then((b) => b.toString()));
-      if (!model) return sendJSON(res, 400, { error: { message: 'model required' } });
+      if (!validModelId(model)) return sendJSON(res, 400, { error: { message: 'invalid model id' } });
       const results = await validateUpstreams(model);
       const summary = { ok: 0, limited: 0, bad: 0, auth: 0, unknown: 0 };
       for (const r of Object.values(results)) summary[r.status] = (summary[r.status] || 0) + 1;
@@ -893,7 +1135,8 @@ const server = http.createServer(async (req, res) => {
       const body = JSON.parse(await readBody(req).then((b) => b.toString()));
       if (body.perModel) {
         for (const [m, c] of Object.entries(body.perModel)) {
-          const normalize = (v) => [...new Set((Array.isArray(v) ? v : []).map((s) => String(s).trim()).filter(Boolean))].slice(0, 10);
+          if (!validModelId(m) || !c || typeof c !== 'object') return sendJSON(res, 400, { error: { message: 'invalid model config' } });
+          const normalize = (v) => [...new Set((Array.isArray(v) ? v : []).map((s) => String(s).trim()).filter(validUpstream))].slice(0, 10);
           let upstreams = normalize(c.upstreams);
           const exclude = normalize(c.exclude);
           const excl = new Set(exclude);
@@ -933,7 +1176,6 @@ server.on('error', (e) => {
   process.exit(1);
 });
 
-const BIND_HOST = process.env.BIND_HOST || '127.0.0.1';
 server.listen(config.port, BIND_HOST, () => {
   console.log(`Cline Pass 上游控制台:  http://127.0.0.1:${config.port}/`);
   console.log(`OpenAI 兼容代理地址:   http://127.0.0.1:${config.port}/v1`);
