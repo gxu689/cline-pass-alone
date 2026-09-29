@@ -90,23 +90,54 @@
   .bulk-tools { display:flex; gap:8px; align-items:flex-start; flex-wrap:wrap; margin:12px 0 4px; }
   .bulk-tools textarea { width:min(680px, 100%); min-height:64px; resize:vertical; background:var(--card2); color:var(--text); border:1px solid var(--border); border-radius:7px; padding:8px 10px; font:12px Consolas, monospace; }
   .usage-card { margin-top:14px; padding-top:14px; border-top:1px solid var(--border); }
-  .usage-list { display:flex; flex-direction:column; gap:10px; }
-  .usage-account { border:1px solid var(--border); border-radius:8px; padding:10px 12px; background:var(--card2); }
-  .usage-account-title { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:7px; }
-  .usage-account-title .dim { font-size:11px; }
-  .usage-row { display:grid; grid-template-columns:70px minmax(80px, 1fr) 70px 26px; align-items:center; gap:10px; min-height:28px; font-size:13px; }
-  .usage-label { color:var(--dim); font-family:Consolas, monospace; }
-  .usage-track { height:9px; background:#e5e9ee; border-radius:7px; overflow:hidden; position:relative; }
-  .usage-track i { display:block; height:100%; min-width:2px; background:#13c98b; border-radius:7px; }
-  .usage-pct { text-align:right; font-weight:600; color:var(--text); }
-  .usage-refresh { background:transparent; color:var(--dim); border:0; padding:2px; font-size:20px; line-height:1; }
-  .usage-refresh:hover { color:var(--accent); border:0; }
-  .usage-detail { color:var(--dim); font-size:11px; margin-left:80px; }
+  .usage-list { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 390px), 1fr)); gap:14px; margin-top:12px; }
+  .usage-account { overflow:hidden; border:1px solid #dfe4eb; border-radius:10px; background:#fff; box-shadow:0 1px 3px #0000000a; }
+  .usage-account-title { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:17px 60px; border-bottom:2px solid #dce2e9; color:#687384; background:#fff; }
+  .usage-account-title strong { font-size:20px; font-weight:700; letter-spacing:.02em; }
+  .usage-account-title span { font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .usage-rows { padding:25px 58px 22px 60px; background:repeating-linear-gradient(155deg, #f6f8fb 0 13px, #e9eef3 14px, #f6f8fb 15px); }
+  .usage-row { display:grid; grid-template-columns:72px minmax(90px, 1fr) 78px 24px; align-items:center; gap:18px; min-height:47px; }
+  .usage-label { color:#788395; font-size:18px; }
+  .usage-track { height:12px; background:#edf1f5; border-radius:99px; overflow:hidden; }
+  .usage-track i { display:block; height:100%; background:#10c996; border-radius:99px; }
+  .usage-pct { text-align:right; color:#2d3544; font-size:21px; font-weight:600; white-space:nowrap; }
+  .usage-refresh { background:transparent; color:#7c899a; border:0; padding:0; font-size:23px; line-height:1; }
+  .usage-refresh:hover { color:#3e708f; border:0; }
+  .usage-message { padding-top:9px; color:#687384; font-size:11px; line-height:1.5; }
+  .stats-grid { display:grid; grid-template-columns:repeat(3, minmax(180px, 1fr)); gap:12px; }
+  .stat-tile { background:var(--card2); border:1px solid var(--border); border-radius:10px; padding:16px; min-height:112px; }
+  .stat-tile .label { color:var(--dim); font-size:12px; }
+  .stat-tile .value { font-size:27px; font-weight:700; margin:11px 0 5px; }
+  .stat-tile .detail { color:var(--dim); font-size:11px; line-height:1.5; }
+  .stats-detail { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:14px; }
+  .stat-model { display:grid; grid-template-columns:minmax(120px, 1fr) 66px 80px; gap:9px; align-items:center; padding:10px 0; border-bottom:1px solid var(--border); font-size:12px; }
+  .stat-model .meter { grid-column:1 / -1; height:5px; border-radius:5px; background:var(--border); overflow:hidden; }
+  .stat-model .meter i { display:block; height:100%; background:var(--accent); }
+  .stat-heading { display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; }
+  .stat-heading h2 { margin:0; }
+  .stat-model-mode { display:flex; gap:4px; background:var(--card2); border-radius:7px; padding:3px; }
+  .stat-model-mode button { background:transparent; color:var(--dim); padding:5px 9px; }
+  .stat-model-mode button.active { background:var(--accent); color:#fff; }
+  .composition-track { display:flex; height:12px; background:var(--border); border-radius:99px; overflow:hidden; margin:14px 0 10px; }
+  .composition-track i { display:block; background:var(--accent); }
+  .composition-legend { display:flex; justify-content:space-between; gap:12px; color:var(--dim); font-size:12px; }
+  .filter-tabs { display:flex; flex-wrap:wrap; gap:6px; margin:12px 0; }
+  .filter-tabs button { background:var(--card2); border:1px solid var(--border); color:var(--dim); }
+  .filter-tabs button.active { color:var(--text); border-color:var(--accent); background:#23344f; }
+  .log-filters { display:grid; grid-template-columns:minmax(220px, 2fr) repeat(4, minmax(115px, 1fr)); gap:8px; margin:12px 0; }
+  .log-filters input, .log-filters select, .history-custom input { width:100%; max-width:none; background:var(--card2); color:var(--text); border:1px solid var(--border); border-radius:7px; padding:8px 10px; font-size:12px; }
+  .history-custom { display:flex; gap:8px; align-items:center; margin:9px 0; color:var(--dim); font-size:12px; }
+  .log-counts { display:flex; flex-wrap:wrap; gap:8px; margin:10px 0; }
+  .log-counts span { background:var(--card2); border:1px solid var(--border); border-radius:7px; padding:7px 10px; color:var(--dim); font-size:12px; }
+  .log-counts b { color:var(--text); margin-left:5px; }
+  .history-wrap { overflow-x:auto; }
+  .history-wrap table { min-width:1030px; }
+  .history-pager { display:flex; gap:10px; align-items:center; justify-content:flex-end; flex-wrap:wrap; margin-top:12px; font-size:12px; color:var(--dim); }
   .schedule-grid { display:grid; grid-template-columns:repeat(2, minmax(220px, 1fr)); gap:14px 22px; margin:12px 0; }
   .schedule-grid label { display:flex; flex-direction:column; gap:6px; color:var(--dim); font-size:12px; }
   .schedule-grid input, .schedule-grid select { width:100%; max-width:none; padding:8px 10px; }
   .schedule-note { color:var(--dim); font-size:12px; line-height:1.6; }
-  @media (max-width: 760px) { body { padding:14px 10px; } .page-nav { top:4px; } .page-tab { flex:1; min-width:92px; padding:8px 7px; } .ups-panel { min-width:300px; } .schedule-grid { grid-template-columns:1fr; } table { display:block; overflow-x:auto; } }
+  @media (max-width: 760px) { body { padding:14px 10px; } .page-nav { top:4px; } .page-tab { flex:1; min-width:92px; padding:8px 7px; } .ups-panel { min-width:300px; } .schedule-grid, .stats-detail, .log-filters { grid-template-columns:1fr; } .stats-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .usage-row { grid-template-columns:60px minmax(55px, 1fr) 72px 24px; gap:9px; } .usage-account-title { padding:17px 14px; } .usage-rows { padding:18px 14px; } table { display:block; overflow-x:auto; } }
 </style>
 </head>
 <body>
@@ -151,7 +182,9 @@
     <button class="page-tab active" data-page-tab="overview" onclick="switchPage('overview', this)">概览</button>
     <button class="page-tab" data-page-tab="accounts" onclick="switchPage('accounts', this)">账号池</button>
     <button class="page-tab" data-page-tab="models" onclick="switchPage('models', this)">模型管理</button>
-    <button class="page-tab" data-page-tab="testing" onclick="switchPage('testing', this)">测试与历史</button>
+    <button class="page-tab" data-page-tab="testing" onclick="switchPage('testing', this)">测试台</button>
+    <button class="page-tab" data-page-tab="stats" onclick="switchPage('stats', this)">使用统计</button>
+    <button class="page-tab" data-page-tab="logs" onclick="switchPage('logs', this)">请求日志</button>
     <button class="page-tab" data-page-tab="security" onclick="switchPage('security', this)">安全与目录</button>
   </nav>
 
@@ -186,10 +219,10 @@
     <div id="batchTestMsg" class="result" style="display:none"></div>
     <div class="usage-card">
       <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
-        <h2 style="margin:0">账号额度</h2>
-        <button class="ghost" onclick="loadUsage(true)" id="usageRefreshBtn">↻ 刷新额度</button>
+        <h2 style="margin:0">账号用量</h2>
+        <button class="ghost" onclick="loadUsage(true)" id="usageRefreshBtn">↻ 全部刷新</button>
       </div>
-      <div class="dim" style="font-size:12px; margin:6px 0 10px">按 spark 和 7d 窗口显示已用比例。官方接口未返回周期用量时会显示余额比例或明确原因；普通 API Key 可能无权访问账户资料。</div>
+      <div class="dim" style="font-size:12px; margin-top:6px">按账号显示接口实际返回的额度窗口；无权限时显示原因，不估算百分比。</div>
       <div id="usageBody" class="usage-list"><div class="empty">点击刷新额度</div></div>
       <div id="usageStatus" class="dim" style="font-size:12px; margin-top:8px"></div>
     </div>
@@ -257,12 +290,22 @@
     <div class="result" id="testResult"></div>
   </div>
 
-  <div class="card" data-page="testing">
-    <h2>请求历史（最近 100 条，经代理的请求自动记录）</h2>
-    <table>
-      <thead><tr><th>时间</th><th>模型</th><th>账号</th><th>实际上游</th><th>背后模型</th><th>耗时</th><th>方式</th><th>尝试序列</th></tr></thead>
-      <tbody id="histBody"><tr><td colspan="7" class="empty">暂无记录</td></tr></tbody>
-    </table>
+  <div class="card" data-page="stats">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><div><h2 style="margin:0">使用统计</h2><div class="dim" style="font-size:12px;margin-top:5px">请求日志与性能指标 · 今日按浏览器本地日期计算</div></div><button class="ghost" onclick="loadStats()">↻ 刷新</button></div>
+    <div id="statsCards" class="stats-grid" style="margin-top:16px"><div class="empty">加载中…</div></div>
+    <div class="stats-detail"><div class="card" style="margin:0"><div class="stat-heading"><h2>模型统计</h2><div class="stat-model-mode"><button id="statsByRequests" class="active" onclick="setStatsModelMode('requests')">按请求</button><button id="statsByCost" onclick="setStatsModelMode('cost')">按金额</button></div></div><div class="dim" id="statsModelNote" style="font-size:12px;margin:9px 0">今日主要模型的请求与 Token</div><div id="statsModels"></div></div><div class="card" style="margin:0"><h2>请求构成</h2><div id="statsComposition"></div></div></div>
+    <div id="statsStatus" class="dim" style="font-size:12px;margin-top:10px"></div>
+  </div>
+
+  <div class="card" data-page="logs">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h2 style="margin:0">请求记录</h2><div><span id="histTotal" class="dim" style="font-size:12px;margin-right:8px">0 条记录</span><button class="ghost" onclick="loadHistory()">↻ 刷新</button></div></div>
+    <div id="histRanges" class="filter-tabs"><button data-range="today" class="active" onclick="setHistoryRange('today')">今日</button><button data-range="1h" onclick="setHistoryRange('1h')">1 小时</button><button data-range="6h" onclick="setHistoryRange('6h')">6 小时</button><button data-range="24h" onclick="setHistoryRange('24h')">24 小时</button><button data-range="2d" onclick="setHistoryRange('2d')">2 天</button><button data-range="custom" onclick="setHistoryRange('custom')">自定义</button></div>
+    <div id="histCustom" class="history-custom" style="display:none"><label>开始 <input id="histFrom" type="datetime-local" onchange="historyFiltersChanged()"></label><label>结束 <input id="histTo" type="datetime-local" onchange="historyFiltersChanged()"></label></div>
+    <div id="histStatuses" class="filter-tabs"><button data-status="all" class="active" onclick="setHistoryStatus('all')">全部</button><button data-status="success" onclick="setHistoryStatus('success')">成功</button><button data-status="error" onclick="setHistoryStatus('error')">全部错误</button><button data-status="4xx" onclick="setHistoryStatus('4xx')">4xx</button><button data-status="5xx" onclick="setHistoryStatus('5xx')">5xx</button><button data-status="500" onclick="setHistoryStatus('500')">500</button><button data-status="401" onclick="setHistoryStatus('401')">401</button><button data-status="429" onclick="setHistoryStatus('429')">429</button><button data-status="499" onclick="setHistoryStatus('499')">499</button></div>
+    <div id="histCounts" class="log-counts"></div>
+    <div class="log-filters"><input id="histSearch" placeholder="搜索错误、模型、账号、端点、渠道、IP 或客户端…" oninput="historySearchChanged()"><select id="histModel" onchange="historyFiltersChanged()"><option value="">全部模型</option></select><select id="histAccount" onchange="historyFiltersChanged()"><option value="">全部账号</option></select><select id="histEndpoint" onchange="historyFiltersChanged()"><option value="">全部端点</option></select><select id="histStream" onchange="historyFiltersChanged()"><option value="all">全部方式</option><option value="stream">流式</option><option value="sync">非流式</option></select></div>
+    <div class="history-wrap"><table><thead><tr><th>时间</th><th>状态</th><th>模型</th><th>账号</th><th>实际上游</th><th>端点</th><th>Token</th><th>耗时</th><th>方式</th><th>来源 IP / 客户端</th><th>错误 / 尝试</th></tr></thead><tbody id="histBody"><tr><td colspan="11" class="empty">加载中…</td></tr></tbody></table></div>
+    <div class="history-pager"><span>日志自动保留近 2 天</span><label>每页 <select id="histPageSize" onchange="historyFiltersChanged()"><option>25</option><option selected>50</option><option>100</option></select> 条</label><button class="ghost" id="histPrev" onclick="historyPage(-1)">上一页</button><span id="histPageInfo">第 1 页</span><button class="ghost" id="histNext" onclick="historyPage(1)">下一页</button></div>
   </div>
 
   <div class="card" data-page="security">
@@ -430,7 +473,6 @@ function render() {
   $('#officialInfo').textContent = of ? `上次拉取 ${new Date(of.ts).toLocaleString()}（${(of.sources || []).join('+')}，新增 ${of.added.length}）` : '尚未拉取过官方清单';
   renderCatalog();
 
-  loadHistory();
 }
 
 function renderCatalog() {
@@ -455,11 +497,13 @@ async function loadAll() {
         $(`#${id}`).value = ACCS[id];
       }
       $('#scheduleStatus').textContent = `当前运行 ${ACCS.scheduling?.active || 0} · 排队 ${ACCS.scheduling?.queued || 0}`;
-      loadUsage(false).catch(() => {});
+      if (currentPage === 'accounts') loadUsage(false).catch(() => {});
     }),
     api('/api/security').then(renderSecurity),
     api('/api/meta').then((meta) => { $('#noKeyBanner').style.display = meta.configured ? 'none' : 'block'; }),
   ]);
+  if (currentPage === 'stats') loadStats();
+  if (currentPage === 'logs') loadHistory();
 }
 
 function renderSecurity(sec) {
@@ -729,17 +773,95 @@ function bulkUp(id, action) {
   }
 }
 
+const compact = (value) => { const n = Number(value) || 0; return n >= 1e9 ? `${(n / 1e9).toFixed(1)}B` : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}K` : String(n); };
+let STATS_DATA = null;
+let STATS_MODEL_MODE = 'requests';
+function setStatsModelMode(mode) { STATS_MODEL_MODE = mode; renderStatsModels(); }
+function renderStatsModels() {
+  if (!STATS_DATA) return;
+  $('#statsByRequests').classList.toggle('active', STATS_MODEL_MODE === 'requests');
+  $('#statsByCost').classList.toggle('active', STATS_MODEL_MODE === 'cost');
+  const models = (STATS_DATA.models || []).filter((m) => STATS_MODEL_MODE !== 'cost' || m.costSamples > 0)
+    .sort((a, b) => STATS_MODEL_MODE === 'cost' ? b.cost - a.cost : b.requests - a.requests).slice(0, 10);
+  const max = Math.max(1, ...models.map((m) => STATS_MODEL_MODE === 'cost' ? m.cost : m.requests));
+  $('#statsModelNote').textContent = STATS_MODEL_MODE === 'cost' ? '仅统计上游返回费用的请求，未返回费用的模型不参与排名' : '今日主要模型的请求与 Token';
+  $('#statsModels').innerHTML = models.map((m) => {
+    const value = STATS_MODEL_MODE === 'cost' ? m.cost : m.requests;
+    const metric = STATS_MODEL_MODE === 'cost' ? `$${Number(m.cost).toFixed(4)}` : `${compact(m.requests)} 次`;
+    return `<div class="stat-model"><span class="mono" title="${escapeHtml(m.model)}">${escapeHtml(m.model)}</span><span>${metric}</span><span>${compact(m.tokens)} Token</span><span class="meter"><i style="width:${Math.min(100, value / max * 100).toFixed(1)}%"></i></span></div>`;
+  }).join('') || `<div class="empty">${STATS_MODEL_MODE === 'cost' ? '上游尚未返回费用数据' : '今日暂无请求'}</div>`;
+}
+async function loadStats() {
+  try {
+    const s = await api(`/api/stats?tzOffset=${-new Date().getTimezoneOffset()}`);
+    STATS_DATA = s;
+    const t = s.today || {};
+    const cards = [
+      ['今日请求数', compact(t.requests), `成功 ${compact(t.success)} · 近 2 天 ${compact(s.twoDays?.requests)}`],
+      ['今日 TOKEN', compact(t.tokens), `输入 ${compact(t.inputTokens)} · 输出 ${compact(t.outputTokens)}`],
+      ['今日计费', t.costSamples ? `$${Number(t.cost).toFixed(4)}` : '—', t.costSamples ? `上游提供费用的请求 ${t.costSamples} 条` : '上游未返回费用，无法计算'],
+      ['RPM', compact(s.rpm), '最近 60 秒请求数'],
+      ['TPM', compact(s.tpm), '最近 60 秒 Token 数'],
+      ['错误率', `${Number(s.errorRate || 0).toFixed(1)}%`, `平均延迟 ${compact(s.averageMs)}ms`],
+    ];
+    $('#statsCards').innerHTML = cards.map(([label, value, detail]) => `<div class="stat-tile"><div class="label">${label}</div><div class="value">${value}</div><div class="detail">${detail}</div></div>`).join('');
+    renderStatsModels();
+    const streamPct = t.requests ? Math.max(0, Math.min(100, t.stream / t.requests * 100)) : 0;
+    $('#statsComposition').innerHTML = `<div class="composition-legend"><span>流式 <b>${compact(t.stream)} · ${streamPct.toFixed(1)}%</b></span><span>非流式 <b>${compact((t.requests || 0) - (t.stream || 0))}</b></span></div><div class="composition-track"><i style="width:${streamPct.toFixed(1)}%"></i></div><div class="log-counts"><span>多次尝试 <b>${compact(t.retries)}</b></span><span>错误 <b>${compact(t.errors)}</b></span></div><div class="dim" style="font-size:12px;margin-top:14px">近 2 天：${compact(s.twoDays?.requests)} 次请求 · ${compact(s.twoDays?.tokens)} Token · ${compact(s.twoDays?.errors)} 次错误</div>`;
+    $('#statsStatus').textContent = `更新于 ${new Date(s.updatedAt).toLocaleTimeString()} · 统计基于近 2 天日志；Token 和费用以网关返回值为准`;
+  } catch { $('#statsStatus').textContent = '使用统计加载失败'; }
+}
+
+const HIST = { range: 'today', status: 'all', page: 1, pages: 1 };
+let historySearchTimer;
+let historyRequestId = 0;
+function historyBounds() {
+  const now = Date.now();
+  if (HIST.range === 'custom') return { from: Date.parse($('#histFrom').value) || undefined, to: Date.parse($('#histTo').value) || undefined };
+  if (HIST.range === 'today') { const start = new Date(); start.setHours(0, 0, 0, 0); return { from: start.getTime(), to: now }; }
+  const duration = { '1h': 3600e3, '6h': 6 * 3600e3, '24h': 24 * 3600e3, '2d': 48 * 3600e3 }[HIST.range] || 48 * 3600e3;
+  return { from: now - duration, to: now };
+}
+function setHistoryRange(range) {
+  HIST.range = range; HIST.page = 1;
+  document.querySelectorAll('#histRanges button').forEach((b) => b.classList.toggle('active', b.dataset.range === range));
+  $('#histCustom').style.display = range === 'custom' ? 'flex' : 'none';
+  loadHistory();
+}
+function setHistoryStatus(statusFilter) {
+  HIST.status = statusFilter; HIST.page = 1;
+  document.querySelectorAll('#histStatuses button').forEach((b) => b.classList.toggle('active', b.dataset.status === statusFilter));
+  loadHistory();
+}
+function historyFiltersChanged() { HIST.page = 1; loadHistory(); }
+function historySearchChanged() { clearTimeout(historySearchTimer); historySearchTimer = setTimeout(historyFiltersChanged, 250); }
+function historyPage(delta) { HIST.page = Math.max(1, Math.min(HIST.pages, HIST.page + delta)); loadHistory(); }
 async function loadHistory() {
-  const { history } = await api('/api/history');
-  $('#histBody').innerHTML = history.length ? history.map((h) => `<tr>
-      <td>${fmt(h.ts)}</td><td class="mono">${escapeHtml(h.model)}</td>
-      <td>${h.account ? '<span class="badge">' + escapeHtml(h.account) + '</span>' : '<span class="dim">—</span>'}</td>
-      <td>${h.provider ? '<span class="badge">' + escapeHtml(h.provider) + '</span>' : '<span class="dim">—</span>'}</td>
-      <td class="mono dim">${escapeHtml(h.canonical || '—')}</td>
-      <td>${h.ms ?? '—'} ms</td>
-      <td>${h.stream ? '流式' : '非流式'}</td>
-      <td class="dim">${(h.trace || h.attempts || []).map((t) => escapeHtml(typeof t === 'string' ? t : `${t.upstream || 'auto'}${t.account ? ' · ' + t.account : ''}(${t.status === 200 ? '✔' : '✗'}${t.ms}ms)`)).join(' → ') || '—'}</td>
-    </tr>`).join('') : '<tr><td colspan="8" class="empty">暂无记录 —— 把客户端 Base URL 指向代理地址即可自动记录</td></tr>';
+  const requestId = ++historyRequestId;
+  const params = new URLSearchParams({ status: HIST.status, page: String(HIST.page), pageSize: $('#histPageSize').value });
+  const { from, to } = historyBounds();
+  if (from) params.set('from', String(from));
+  if (to) params.set('to', String(to));
+  const q = $('#histSearch').value.trim(); if (q) params.set('q', q);
+  if ($('#histModel').value) params.set('model', $('#histModel').value);
+  if ($('#histAccount').value) params.set('accountId', $('#histAccount').value);
+  if ($('#histEndpoint').value) params.set('endpoint', $('#histEndpoint').value);
+  params.set('stream', $('#histStream').value);
+  try {
+    const r = await api(`/api/history?${params}`);
+    if (requestId !== historyRequestId) return;
+    HIST.page = r.page; HIST.pages = r.pages;
+    $('#histTotal').textContent = `${r.total.toLocaleString()} 条记录`;
+    $('#histCounts').innerHTML = [['错误总数', r.counts.error], ['4xx', r.counts['4xx']], ['5xx', r.counts['5xx']], ['401', r.counts['401']], ['429', r.counts['429']], ['499', r.counts['499']], ['多次尝试', r.counts.retries]].map(([label, value]) => `<span>${label}<b>${value}</b></span>`).join('');
+    const model = $('#histModel').value, account = $('#histAccount').value, endpoint = $('#histEndpoint').value;
+    $('#histModel').innerHTML = '<option value="">全部模型</option>' + (r.models || []).map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join('');
+    $('#histAccount').innerHTML = '<option value="">全部账号</option>' + (r.accounts || []).map((a) => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.name)}</option>`).join('');
+    $('#histEndpoint').innerHTML = '<option value="">全部端点</option>' + (r.endpoints || []).map((e) => `<option value="${escapeHtml(e)}">${escapeHtml(e)}</option>`).join('');
+    $('#histModel').value = model; $('#histAccount').value = account; $('#histEndpoint').value = endpoint;
+    $('#histBody').innerHTML = r.history.length ? r.history.map((h) => `<tr><td class="dim">${escapeHtml(new Date(h.ts).toLocaleString())}</td><td><span class="badge ${h.status < 400 ? 'green' : 'orange'}">${h.status}</span></td><td class="mono">${escapeHtml(h.model)}</td><td>${escapeHtml(h.account || '—')}</td><td>${escapeHtml(h.provider || '—')}</td><td class="mono">${escapeHtml(h.endpoint || '—')}</td><td>${compact(h.totalTokens)}</td><td>${h.ms} ms</td><td>${h.stream ? '流式' : '非流式'}</td><td class="dim" title="${escapeHtml(h.userAgent || '')}">${escapeHtml(h.ip || '—')}<div style="font-size:11px">${escapeHtml((h.userAgent || '').slice(0, 45))}</div></td><td class="dim" title="${escapeHtml(h.error || '')}">${escapeHtml((h.error || '').slice(0, 90))}${h.attempts > 1 ? `<div>${h.attempts} 次尝试</div>` : ''}</td></tr>`).join('') : '<tr><td colspan="11" class="empty">当前条件下暂无请求记录</td></tr>';
+    $('#histPageInfo').textContent = `第 ${r.page} / ${r.pages} 页`;
+    $('#histPrev').disabled = r.page <= 1; $('#histNext').disabled = r.page >= r.pages;
+  } catch { if (requestId === historyRequestId) $('#histBody').innerHTML = '<tr><td colspan="11" class="empty">日志加载失败</td></tr>'; }
 }
 
 let ACCS = null;
@@ -862,16 +984,20 @@ function usageNumber(value, unit) {
 let USAGE_ITEMS = [];
 function renderUsage(items) {
   $('#usageBody').innerHTML = (items || []).map((u) => {
-    const periods = Array.isArray(u.periods) && u.periods.length ? u.periods : (u.ok && u.limit > 0 && u.used != null
-      ? [{ label: '额度', percent: Math.min(100, Math.max(0, u.used / u.limit * 100)), used: u.used, limit: u.limit, unit: u.unit, resetAt: u.resetAt }]
-      : []);
-    const rows = periods.map((p) => {
-      const pct = Math.max(0, Math.min(100, Number(p.percent) || 0));
-      const detail = p.used != null && p.limit != null ? `<div class="usage-detail">${usageNumber(p.used, p.unit)} / ${usageNumber(p.limit, p.unit)}${p.resetAt ? ` · ${escapeHtml(new Date(p.resetAt).toLocaleString())}` : ''}</div>` : '';
-      return `<div class="usage-row"><span class="usage-label">${escapeHtml(p.label)}</span><span class="usage-track"><i style="width:${pct.toFixed(1)}%"></i></span><span class="usage-pct">${pct.toFixed(1)}%</span><span></span></div>${detail}`;
+    const periods = Array.isArray(u.periods) ? u.periods : [];
+    const shown = periods.length ? periods : u.ok && u.limit > 0 && u.used != null
+      ? [{ label: '总额度', percent: u.used / u.limit * 100, used: u.used, limit: u.limit, unit: u.unit, resetAt: u.resetAt }]
+      : [];
+    const rows = shown.map((p, index) => {
+      const label = p.label;
+      const pct = p?.percent != null && Number.isFinite(Number(p.percent)) ? Math.max(0, Math.min(100, Number(p.percent))) : null;
+      const detail = p?.used != null && p?.limit != null ? `${p.used} / ${p.limit} ${p.unit || ''}` : '';
+      const title = detail || (p?.resetAt ? `重置：${new Date(p.resetAt).toLocaleString()}` : '暂无周期额度数据');
+      return `<div class="usage-row"><span class="usage-label">${escapeHtml(label)}</span><span class="usage-track" title="${escapeHtml(title)}"><i style="width:${pct == null ? 0 : pct.toFixed(1)}%"></i></span><strong class="usage-pct">${pct == null ? '—' : `${pct.toFixed(1)}%`}</strong>${index === 0 ? `<button class="usage-refresh" onclick="loadUsage(true, ${jsArg(u.id || '')})" title="刷新此账号用量" aria-label="刷新 ${escapeHtml(u.account)} 的用量">↻</button>` : '<span></span>'}</div>`;
     }).join('');
-    const body = rows || `<div class="dim" style="font-size:12px">${u.ok && u.remaining != null ? `剩余 ${usageNumber(u.remaining, u.unit)}；接口未返回周期用量` : escapeHtml(u.error || '接口未返回周期用量')}</div>`;
-    return `<div class="usage-account"><div class="usage-account-title"><span class="badge">${escapeHtml(u.account)}</span><span class="dim">${u.ok ? escapeHtml(u.source || '') : '不可用'} <button class="usage-refresh" onclick="loadUsage(true, ${jsArg(u.id || '')})" title="刷新此账号用量">↻</button></span></div>${body}</div>`;
+    const message = shown.length ? '' : u.ok && u.remaining != null ? `余额剩余 ${usageNumber(u.remaining, u.unit)}；接口未返回比例` : escapeHtml(u.error || '接口未返回额度数据');
+    const empty = shown.length ? '' : `<div class="usage-row"><span class="usage-label">额度</span><span class="usage-track"><i style="width:0%"></i></span><strong class="usage-pct">—</strong><button class="usage-refresh" onclick="loadUsage(true, ${jsArg(u.id || '')})" title="刷新此账号用量" aria-label="刷新 ${escapeHtml(u.account)} 的用量">↻</button></div>`;
+    return `<section class="usage-account"><div class="usage-account-title"><strong>用量</strong><span title="${escapeHtml(u.account)}">${escapeHtml(u.account)}</span></div><div class="usage-rows">${rows}${empty}${message ? `<div class="usage-message">${message}</div>` : ''}</div></section>`;
   }).join('') || '<div class="empty">暂无账号</div>';
 }
 async function loadUsage(force = false, id = '') {
@@ -890,7 +1016,7 @@ async function loadUsage(force = false, id = '') {
       $('#usageStatus').textContent = `更新于 ${new Date(r.checkedAt || Date.now()).toLocaleTimeString()}`;
     } else throw new Error(r.error?.message || '读取失败');
   } catch (e) { $('#usageStatus').textContent = '额度读取失败，请稍后重试'; }
-  if (force && !id) { btn.disabled = false; btn.textContent = '↻ 刷新额度'; }
+  if (force && !id) { btn.disabled = false; btn.textContent = '↻ 全部刷新'; }
 }
 
 async function testAccount(i, btn) {
@@ -925,6 +1051,9 @@ function switchPage(page, button) {
   document.querySelectorAll('[data-page]').forEach((el) => el.classList.toggle('page-hidden', el.dataset.page !== page));
   document.querySelectorAll('[data-page-tab]').forEach((el) => el.classList.toggle('active', el.dataset.pageTab === page));
   if (button) button.blur();
+  if (ACCS && page === 'accounts') loadUsage(false).catch(() => {});
+  if (DATA && page === 'stats') loadStats();
+  if (DATA && page === 'logs') loadHistory();
 }
 
 let statusTimer;

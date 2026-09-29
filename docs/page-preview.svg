@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1500" viewBox="0 0 1280 1500">
+  <defs>
+    <style>
+      text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif; fill: #e6e9f0; }
+      .muted { fill:#8b93a5; } .small { font-size:15px; } .tiny { font-size:13px; }
+      .title { font-size:25px; font-weight:700; } .number { font-size:32px; font-weight:700; }
+      .card { fill:#171a21; stroke:#2a2f3c; stroke-width:1; } .tile { fill:#1d212b; stroke:#2a2f3c; stroke-width:1; }
+      .line { stroke:#2a2f3c; stroke-width:1; } .blue { fill:#4f8cff; } .green { fill:#34c77b; }
+    </style>
+  </defs>
+  <rect width="1280" height="1500" fill="#0f1115"/>
+  <text x="42" y="49" class="title">Cline Pass 上游控制台</text>
+  <text x="1190" y="48" class="muted tiny" text-anchor="end">页面结构预览 · 示例数据</text>
+  <rect x="42" y="71" width="1196" height="54" rx="10" class="card"/>
+  <text x="65" y="105" class="muted small">概览</text><text x="157" y="105" class="muted small">账号池</text><text x="251" y="105" class="muted small">模型管理</text>
+  <text x="370" y="105" class="muted small">测试台</text><rect x="449" y="79" width="112" height="38" rx="7" class="blue"/><text x="469" y="104" class="small">使用统计</text>
+  <text x="586" y="105" class="muted small">请求日志</text><text x="699" y="105" class="muted small">安全与目录</text>
+
+  <text x="42" y="171" class="title">使用统计</text><text x="42" y="195" class="muted small">今日请求与性能指标 · 费用仅显示上游已返回的数据</text>
+  <g>
+    <rect x="42" y="216" width="380" height="128" rx="12" class="tile"/><text x="62" y="244" class="muted small">今日请求数</text><text x="62" y="292" class="number">128</text><text x="62" y="323" class="muted tiny">成功 123 · 近 2 天 247</text>
+    <rect x="440" y="216" width="380" height="128" rx="12" class="tile"/><text x="460" y="244" class="muted small">今日 TOKEN</text><text x="460" y="292" class="number">82.4K</text><text x="460" y="323" class="muted tiny">输入 65.1K · 输出 17.3K</text>
+    <rect x="838" y="216" width="400" height="128" rx="12" class="tile"/><text x="858" y="244" class="muted small">今日计费</text><text x="858" y="292" class="number green">$0.0842</text><text x="858" y="323" class="muted tiny">上游提供费用的请求 43 条</text>
+    <rect x="42" y="360" width="380" height="128" rx="12" class="tile"/><text x="62" y="388" class="muted small">RPM</text><text x="62" y="436" class="number">3</text><text x="62" y="467" class="muted tiny">最近 60 秒请求数</text>
+    <rect x="440" y="360" width="380" height="128" rx="12" class="tile"/><text x="460" y="388" class="muted small">TPM</text><text x="460" y="436" class="number">1.8K</text><text x="460" y="467" class="muted tiny">最近 60 秒 Token 数</text>
+    <rect x="838" y="360" width="400" height="128" rx="12" class="tile"/><text x="858" y="388" class="muted small">错误率</text><text x="858" y="436" class="number">3.9%</text><text x="858" y="467" class="muted tiny">平均延迟 2.1s</text>
+  </g>
+  <rect x="42" y="508" width="576" height="245" rx="12" class="card"/><text x="62" y="542" font-size="18" font-weight="700">模型统计</text>
+  <rect x="485" y="519" width="113" height="34" rx="7" fill="#23344f"/><text x="498" y="541" class="tiny">按请求  按金额</text>
+  <text x="62" y="578" class="muted tiny">cline-pass/glm-5.3</text><text x="530" y="578" class="tiny">72 次</text><rect x="62" y="589" width="530" height="6" rx="3" fill="#2a2f3c"/><rect x="62" y="589" width="375" height="6" rx="3" class="blue"/>
+  <text x="62" y="629" class="muted tiny">cline-pass/kimi-k3</text><text x="530" y="629" class="tiny">38 次</text><rect x="62" y="640" width="530" height="6" rx="3" fill="#2a2f3c"/><rect x="62" y="640" width="198" height="6" rx="3" class="blue"/>
+  <text x="62" y="680" class="muted tiny">cline-pass/qwen3.8-max</text><text x="530" y="680" class="tiny">18 次</text><rect x="62" y="691" width="530" height="6" rx="3" fill="#2a2f3c"/><rect x="62" y="691" width="94" height="6" rx="3" class="blue"/>
+  <rect x="636" y="508" width="602" height="245" rx="12" class="card"/><text x="656" y="542" font-size="18" font-weight="700">请求构成</text>
+  <text x="656" y="593" class="muted small">流式 96 · 75.0%</text><text x="1214" y="593" text-anchor="end" class="muted small">非流式 32</text>
+  <rect x="656" y="609" width="558" height="12" rx="6" fill="#2a2f3c"/><rect x="656" y="609" width="418" height="12" rx="6" class="blue"/>
+  <rect x="656" y="651" width="135" height="48" rx="7" class="tile"/><text x="671" y="681" class="small">重试 5</text>
+  <rect x="803" y="651" width="135" height="48" rx="7" class="tile"/><text x="818" y="681" class="small">错误 5</text>
+  <text x="656" y="733" class="muted tiny">近 2 天：247 次请求 · 146K Token · 8 次错误</text>
+
+  <line x1="42" y1="791" x2="1238" y2="791" class="line"/><text x="42" y="837" class="title">请求日志</text><text x="1120" y="837" class="muted small">128 条记录</text>
+  <rect x="42" y="859" width="1196" height="445" rx="12" class="card"/>
+  <rect x="62" y="878" width="70" height="34" rx="7" fill="#23344f"/><text x="79" y="900" class="small">今日</text>
+  <text x="151" y="900" class="muted small">1 小时</text><text x="254" y="900" class="muted small">6 小时</text><text x="356" y="900" class="muted small">24 小时</text><text x="466" y="900" class="muted small">2 天</text><text x="545" y="900" class="muted small">自定义</text>
+  <text x="65" y="949" class="small">全部</text><text x="137" y="949" class="green small">成功</text><text x="210" y="949" class="muted small">全部错误</text><text x="318" y="949" class="muted small">4xx</text><text x="384" y="949" class="muted small">5xx</text><text x="449" y="949" class="muted small">500</text><text x="513" y="949" class="muted small">401</text><text x="577" y="949" class="muted small">429</text><text x="640" y="949" class="muted small">499</text>
+  <rect x="62" y="975" width="191" height="36" rx="7" class="tile"/><text x="75" y="999" class="muted tiny">错误总数  5</text><rect x="263" y="975" width="191" height="36" rx="7" class="tile"/><text x="276" y="999" class="muted tiny">4xx  3</text><rect x="464" y="975" width="191" height="36" rx="7" class="tile"/><text x="477" y="999" class="muted tiny">5xx  2</text><rect x="665" y="975" width="191" height="36" rx="7" class="tile"/><text x="678" y="999" class="muted tiny">多次尝试  5</text>
+  <rect x="62" y="1032" width="346" height="40" rx="7" class="tile"/><text x="78" y="1058" class="muted tiny">搜索错误、模型、账号、IP…</text>
+  <rect x="419" y="1032" width="172" height="40" rx="7" class="tile"/><text x="432" y="1058" class="muted tiny">全部模型 ▾</text>
+  <rect x="602" y="1032" width="172" height="40" rx="7" class="tile"/><text x="615" y="1058" class="muted tiny">全部账号 ▾</text>
+  <rect x="785" y="1032" width="172" height="40" rx="7" class="tile"/><text x="798" y="1058" class="muted tiny">全部端点 ▾</text>
+  <rect x="968" y="1032" width="250" height="40" rx="7" class="tile"/><text x="981" y="1058" class="muted tiny">全部方式 ▾</text>
+  <text x="68" y="1112" class="muted tiny">时间</text><text x="280" y="1112" class="muted tiny">状态</text><text x="377" y="1112" class="muted tiny">模型</text><text x="675" y="1112" class="muted tiny">账号</text><text x="814" y="1112" class="muted tiny">端点</text><text x="1085" y="1112" class="muted tiny">Token / 耗时</text><line x1="62" y1="1122" x2="1218" y2="1122" class="line"/>
+  <text x="68" y="1154" class="tiny">09-29 14:26</text><text x="280" y="1154" class="green tiny">200</text><text x="377" y="1154" class="tiny">cline-pass/glm-5.3</text><text x="675" y="1154" class="tiny">账号 A</text><text x="814" y="1154" class="tiny">/v1/chat/completions</text><text x="1085" y="1154" class="tiny">876 / 2.0s</text><line x1="62" y1="1170" x2="1218" y2="1170" class="line"/>
+  <text x="68" y="1202" class="tiny">09-29 14:25</text><text x="280" y="1202" fill="#f0a53c" class="tiny">429</text><text x="377" y="1202" class="tiny">cline-pass/kimi-k3</text><text x="675" y="1202" class="tiny">账号 B</text><text x="814" y="1202" class="tiny">/v1/chat/completions</text><text x="1085" y="1202" class="tiny">— / 0.4s</text>
+  <text x="67" y="1273" class="muted tiny">日志自动保留近 2 天</text><text x="933" y="1273" class="muted tiny">每页 50 条 · 上一页 · 第 1 / 3 页 · 下一页</text>
+
+  <line x1="42" y1="1340" x2="1238" y2="1340" class="line"/><text x="42" y="1387" class="title">账号池 · 额度卡片局部</text>
+  <rect x="42" y="1410" width="575" height="70" rx="10" fill="#f6f8fb"/><text x="65" y="1443" fill="#687384" class="small">总额度</text><rect x="154" y="1433" width="312" height="11" rx="5" fill="#e1e8ee"/><rect x="154" y="1433" width="91" height="11" rx="5" fill="#10c996"/><text x="487" y="1445" fill="#2d3544" font-size="20" font-weight="700">29.0%</text>
+  <rect x="636" y="1410" width="602" height="70" rx="10" fill="#f6f8fb"/><text x="659" y="1443" fill="#687384" class="small">额度不可用时展示接口原因，不显示估算百分比</text>
+</svg>

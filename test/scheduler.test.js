@@ -72,7 +72,7 @@ test('账户周期用量与全局调度、换号及流式重试', { timeout: 200
     }
     if (behavior === 'stream') {
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
-      res.end('data: {"choices":[{"delta":{"content":"hi"}}]}\n\ndata: [DONE]\n\n');
+      res.end('data: {"choices":[{"delta":{"content":"hi"}}]}\n\ndata: {"usage":{"prompt_tokens":4,"completion_tokens":2,"total_tokens":6}}\n\ndata: [DONE]\n\n');
       return;
     }
     if (behavior === 'fragment' || behavior === 'late-error') {
@@ -87,7 +87,7 @@ test('账户周期用量与全局调度、换号及流式重试', { timeout: 200
       return;
     }
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }));
+    res.end(JSON.stringify({ choices: [{ message: { content: 'ok' } }], usage: { prompt_tokens: 2, completion_tokens: 3, total_tokens: 5, cost: 0.001 } }));
   });
   upstream.listen(0, '127.0.0.1');
   await once(upstream, 'listening');
@@ -132,6 +132,14 @@ test('账户周期用量与全局调度、换号及流式重试', { timeout: 200
     assert.ok((await Promise.all(Array.from({ length: 6 }, () => chat()))).every((r) => r.status === 200));
     assert.ok(active.maxTotal <= 2, `global concurrency ${active.maxTotal}`);
     assert.ok(active.maxA <= 1 && active.maxB <= 1, `account concurrency ${active.maxA}/${active.maxB}`);
+    const historyPage = await (await fetch(`${base}/api/history?status=success&pageSize=2&page=2`)).json();
+    assert.equal(historyPage.total, 6);
+    assert.equal(historyPage.pages, 3);
+    assert.equal(historyPage.history.length, 2);
+    const stats = await (await fetch(`${base}/api/stats?tzOffset=480`)).json();
+    assert.ok(stats.today.requests >= 6);
+    assert.ok(stats.today.tokens >= 30);
+    assert.equal(fs.statSync(path.join(dataDir, 'metadata.json')).mode & 0o777, 0o600);
 
     await settings(); behavior = 'rate'; events.length = 0;
     const rate = await chat();
@@ -158,6 +166,13 @@ test('账户周期用量与全局调度、换号及流式重试', { timeout: 200
     assert.equal(streamed.headers.get('x-cline-attempts'), '2');
     assert.match(await streamed.text(), /"content":"hi"/);
     assert.deepEqual(events, ['a', 'b']);
+    const streamLog = await (await fetch(`${base}/api/history?status=success&pageSize=1`)).json();
+    assert.equal(streamLog.history[0].stream, true);
+    assert.equal(streamLog.history[0].totalTokens, 6);
+    const streamOnly = await (await fetch(`${base}/api/history?stream=stream&endpoint=%2Fv1%2Fchat%2Fcompletions`)).json();
+    assert.equal(streamOnly.total, 1);
+    assert.equal(streamOnly.history[0].stream, true);
+    assert.equal((await fetch(`${base}/api/history?stream=invalid`)).status, 400);
 
     await settings(); behavior = 'fragment'; events.length = 0;
     const fragmented = await chat(true);

@@ -12,11 +12,13 @@ import path from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
+import { RequestLogStore } from './request-log.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = process.env.DATA_DIR || __dirname;
 const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
 const META_PATH = path.join(DATA_DIR, 'metadata.json');
+const LOG_PATH = path.join(DATA_DIR, 'request-logs.jsonl');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
 const DEFAULT_CONFIG = {
@@ -79,7 +81,13 @@ const saveConfig = () => {
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 });
   fs.chmodSync(CONFIG_PATH, 0o600);
 };
-const saveMeta = () => fs.writeFileSync(META_PATH, JSON.stringify(META, null, 2));
+const saveMeta = () => {
+  fs.writeFileSync(META_PATH, JSON.stringify(META, null, 2), { mode: 0o600 });
+  fs.chmodSync(META_PATH, 0o600);
+};
+const REQUEST_LOG = new RequestLogStore(LOG_PATH, Array.isArray(META.history) ? META.history : []);
+if (Array.isArray(META.history) && META.history.length) { META.history = []; saveMeta(); }
+setInterval(() => REQUEST_LOG.prune(), 60 * 1000).unref();
 // 旧版单 apiKey 迁移为账号池
 if ((!Array.isArray(config.accounts) || config.accounts.length === 0) && config.apiKey) {
   config.accounts = [{ name: '默认账号', key: config.apiKey, enabled: true }];
@@ -242,7 +250,9 @@ function normalizeUsagePeriods(json) {
   if (!source || typeof source !== 'object' || Array.isArray(source)) return [];
   const aliases = [
     ['spark', ['spark']],
+    ['5h', ['5h', 'fiveHour', 'five_hour', 'rolling5h', 'rolling_5h']],
     ['7d', ['7d', '7day', 'sevenDay', 'seven_day', 'weekly', 'week', 'rolling7d', 'rolling_7d']],
+    ['30d', ['30d', 'monthly', 'month', 'rolling30d', 'rolling_30d']],
   ];
   const periods = [];
   for (const [label, names] of aliases) {
@@ -644,9 +654,9 @@ async function fetchOfficialModels() {
 }
 
 function record(modelId, info) {
-  META.models[modelId] = { ...(META.models[modelId] || {}), ...info };
-  META.history.unshift({ ts: Date.now(), model: modelId, ...info });
-  if (META.history.length > 100) META.history.length = 100;
+  const { status, ip, userAgent, endpoint, ...modelInfo } = info;
+  META.models[modelId] = { ...(META.models[modelId] || {}), ...modelInfo };
+  REQUEST_LOG.append({ model: modelId, ...info });
   if (info.account) {
     META.stats = META.stats || {};
     const st = (META.stats[info.accountId || info.account] ||= { requests: 0, lastUsed: 0, lastError: null, tokens: 0 });
@@ -656,6 +666,9 @@ function record(modelId, info) {
     st.tokens = (st.tokens || 0) + (firstNumber(info.usage?.total_tokens, info.usage?.totalTokens) || 0);
   }
   saveMeta();
+}
+function logContext(req) {
+  return { ip: req.socket.remoteAddress || '', userAgent: req.headers['user-agent'] || '', endpoint: new URL(req.url, 'http://x').pathname };
 }
 
 // ---------- 聊天代理 ----------
@@ -935,9 +948,15 @@ async function handleChat(req, res) {
       'X-Cline-Account': headerSafe(acc.name),
     });
     if (chain.streamHead) res.write(chain.streamHead);
-    let tail = Buffer.alloc(0);
+    let tail = chain.streamHead || Buffer.alloc(0);
     let released = false;
+    let logged = false;
     const releaseSlot = () => { if (!released) { released = true; chain.slotRelease?.(); chain.streamCleanup?.(); } };
+    const recordStream = (status, extra = {}) => {
+      if (logged) return;
+      logged = true;
+      record(modelId, { status, provider: null, canonical: null, ms: Date.now() - t0, stream: true, error: status === 499 ? 'client disconnected' : status === 200 ? null : 'stream interrupted', account: acc.name, accountId: accountId(acc.key), trace: chain.trace, ...logContext(req), ...extra });
+    };
     const tap = new Transform({
       transform(c, enc, cb) {
         // 只保留末尾 64 KiB 用于解析路由元数据，避免长流式回复占满内存。
@@ -947,15 +966,16 @@ async function handleChat(req, res) {
       },
       flush(cb) {
         const text = tail.toString('utf8');
-        let provider = null, canonical = null;
+        let provider = null, canonical = null, usage = null;
         // direct 管道：最后一个 chunk 顶层带 provider（显示名）与 model
         const lines = text.split('\n');
-        for (let i = lines.length - 1; i >= 0 && i >= lines.length - 10 && !provider; i--) {
+        for (let i = lines.length - 1; i >= 0; i--) {
           const l = lines[i];
-          if (!l.startsWith('data: ') || l.includes('[DONE]')) continue;
+          if (!l.startsWith('data:') || l.includes('[DONE]')) continue;
           try {
-            const c = JSON.parse(l.slice(6));
-            if (typeof c.provider === 'string') { provider = slugify(c.provider); canonical = c.model || null; }
+            const c = JSON.parse(l.slice(5).trimStart());
+            if (!usage && c.usage) usage = c.usage;
+            if (!provider && typeof c.provider === 'string') { provider = slugify(c.provider); canonical = c.model || null; }
           } catch { /* 跳过不完整行 */ }
         }
         // planner 管道：final chunk 的 provider_metadata.gateway.routing
@@ -965,13 +985,14 @@ async function handleChat(req, res) {
           provider = fp ? fp[1] : null;
           canonical = cs ? cs[1] : null;
         }
-        record(modelId, { provider, canonical, ms: Date.now() - t0, stream: true, error: null, account: acc.name, accountId: accountId(acc.key), attempts: chain.trace.map((t) => t.upstream || 'auto') });
+        recordStream(200, { provider, canonical, usage });
         releaseSlot();
         cb();
       },
     });
-    res.on('close', () => { chain.streamAbort?.(); releaseSlot(); });
+    res.on('close', () => { if (!logged) recordStream(499); chain.streamAbort?.(); releaseSlot(); });
     pipeline(Readable.fromWeb(up.body), tap, res).catch((e) => {
+      if (!logged) recordStream(res.destroyed ? 499 : 502, { error: e.message });
       releaseSlot();
       if (!res.destroyed) res.destroy(e);
     });
@@ -979,13 +1000,17 @@ async function handleChat(req, res) {
   }
 
   const { status, out, routing, acc } = chain;
-  if (!out) return sendJSON(res, 502, { error: { message: 'no upstream response', type: 'upstream_error' } });
+  if (!out) {
+    record(modelId, { status: 502, ms: Date.now() - chain.t0, stream: false, error: 'no upstream response', trace: chain.trace, ...logContext(req) });
+    return sendJSON(res, 502, { error: { message: 'no upstream response', type: 'upstream_error' } });
+  }
   // 客户端实际使用成功的新订阅模型自动收录进列表
   if (status === 200 && /^cline-pass\//.test(String(modelId)) && !config.knownModels.includes(modelId)) {
     config.knownModels.push(modelId);
     saveConfig();
   }
   record(modelId, {
+    status: req.socket.destroyed ? 499 : status,
     provider: routing.finalProvider || null,
     canonical: routing.canonicalSlug || null,
     ms: Date.now() - chain.t0,
@@ -996,7 +1021,9 @@ async function handleChat(req, res) {
     account: acc ? acc.name : null,
     accountId: acc ? accountId(acc.key) : null,
     usage: routing.usage || null,
+    ...logContext(req),
   });
+  if (req.socket.destroyed) return;
   res.writeHead(status, {
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': '*',
@@ -1080,13 +1107,14 @@ const server = http.createServer(async (req, res) => {
       const chain = await runChatChain(req, body, model, cfg, { stream: false, attemptTimeoutMs: 180000 });
       const trace = chain.trace || [];
       if (chain.status !== 200) {
+        record(model, { status: chain.status, ms: Date.now() - t0, stream: false, trace, error: chain.out?.error?.message || 'upstream error', account: chain.acc?.name || null, accountId: chain.acc ? accountId(chain.acc.key) : null, ...logContext(req) });
         return sendJSON(res, 200, {
           ok: false, error: (chain.out?.error?.message || 'upstream error').slice?.(0, 400) || 'upstream error',
           targets: (cfg.upstreams || []).filter(Boolean), exclude: cfg.exclude || [], trace,
         });
       }
       const r = parseRouting(chain.out);
-      record(model, { provider: r.finalProvider, canonical: r.canonicalSlug, ms: Date.now() - t0, stream: false, attempts: trace.map((t) => t.upstream || 'auto'), error: null, account: chain.acc?.name || null, accountId: chain.acc ? accountId(chain.acc.key) : null, usage: r.usage || null });
+      record(model, { status: 200, provider: r.finalProvider, canonical: r.canonicalSlug, ms: Date.now() - t0, stream: false, trace, error: null, account: chain.acc?.name || null, accountId: chain.acc ? accountId(chain.acc.key) : null, usage: r.usage || null, ...logContext(req) });
       return sendJSON(res, 200, {
         ok: true, ms: Date.now() - t0,
         targets: (cfg.upstreams || []).filter(Boolean), exclude: cfg.exclude || [],
@@ -1231,7 +1259,23 @@ const server = http.createServer(async (req, res) => {
       const r = await fetchOfficialModels();
       return sendJSON(res, 200, { ok: true, ...r });
     }
-    if (req.method === 'GET' && p === '/api/history') return sendJSON(res, 200, { history: META.history });
+    if (req.method === 'GET' && p === '/api/history') {
+      const status = url.searchParams.get('status') || 'all';
+      const allowed = new Set(['all', 'success', 'error', '4xx', '5xx', '401', '429', '499', '500']);
+      if (!allowed.has(status)) return sendJSON(res, 400, { error: { message: 'invalid status filter' } });
+      const stream = url.searchParams.get('stream') || 'all';
+      if (!['all', 'stream', 'sync'].includes(stream)) return sendJSON(res, 400, { error: { message: 'invalid stream filter' } });
+      return sendJSON(res, 200, REQUEST_LOG.query({
+        from: url.searchParams.get('from') || undefined,
+        to: url.searchParams.get('to') || undefined,
+        status, model: (url.searchParams.get('model') || '').slice(0, 200),
+        accountId: (url.searchParams.get('accountId') || '').slice(0, 64),
+        endpoint: (url.searchParams.get('endpoint') || '').slice(0, 100), stream,
+        q: (url.searchParams.get('q') || '').slice(0, 120),
+        page: url.searchParams.get('page') || 1, pageSize: url.searchParams.get('pageSize') || 50,
+      }));
+    }
+    if (req.method === 'GET' && p === '/api/stats') return sendJSON(res, 200, REQUEST_LOG.stats(url.searchParams.get('tzOffset') || 0));
     if (req.method === 'GET' && p === '/api/config') return sendJSON(res, 200, { port: config.port, perModel: config.perModel, knownModels: config.knownModels });
     if (req.method === 'POST' && p === '/api/config') {
       const body = JSON.parse(await readBody(req).then((b) => b.toString()));
