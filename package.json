@@ -10,6 +10,7 @@
   },
   "scripts": {
     "start": "node server.js",
+    "demo": "node scripts/demo.js",
     "test": "node --test"
   }
 }

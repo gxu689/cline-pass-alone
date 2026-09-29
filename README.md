@@ -36,6 +36,8 @@ node server.js        # 仅需 Node ≥ 18，无需 npm install
 打开 <http://127.0.0.1:3123/>，在「账号管理」里添加你的 Cline Pass 账号（`sk_` 开头的 key）并保存即可。
 没有 key 也能启动：页面会提示配置入口。
 
+想先查看带数据的控制台，可运行 `npm run demo`。命令会在本机启动使用虚构账号、额度和日志的演示服务，并打印访问地址；按 `Ctrl+C` 停止后会删除临时演示数据。
+
 > Cline Pass key 从哪里来？购买 Cline Pass 订阅后，在 Cline 的账户设置里创建 API Key。
 > 订阅模型 ID 均为 `cline-pass/*` 前缀（如 `cline-pass/glm-5.2`）。
 
