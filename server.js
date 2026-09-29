@@ -30,6 +30,12 @@ const DEFAULT_CONFIG = {
   accountMode: 'single',   // single=手动指定 | roundrobin=轮询
   activeAccount: 0,        // single 模式下使用的账号下标
   accountConcurrency: 1,   // 每个账号同时允许的上游请求数
+  globalConcurrency: 3,    // 所有账号合计的上游请求数
+  globalRpm: 0,            // 每分钟上游请求数，0=不限
+  maxRetries: 2,           // 一次代理请求最多增加的重试次数（不含渠道故障转移）
+  rateLimitSwitchRetries: 1,
+  retryIntervalMs: 0,
+  transportRetryStrategy: 'switch', // switch=换号，sticky=同号
   knownModels: [
     'cline-pass/glm-5.3-flash',
     'cline-pass/kimi-k3',
@@ -49,7 +55,7 @@ const DEFAULT_CONFIG = {
   ],
   // modelId -> { upstreams: string[]（有序优先列表，空=自动）, exclude: string[]（排除列表，优先级高于勾选）,
   //              pinMode: 'strict'|'preferred', sort: 'cost'|'ttft'|'tps'|null }
-  // 请求按 upstreams 顺序逐个钉住尝试：第一个异常（非 200 / 网络失败 / 超时）自动顺切下一个，
+  // 请求按 upstreams 顺序逐个钉住尝试：本候选按调度策略重试后仍失败，再顺切下一个，
   // 全部失败才把最后一个错误透传给客户端；exclude 中的上游永不被使用（自动模式下注入排除偏好）。
   // upstream 为旧版单上游兼容镜像（取列表第一个），maxRetries 已退役（旧值仅作回滚兼容保留在文件里）。
   perModel: {},
@@ -84,6 +90,14 @@ if ((!Array.isArray(config.accounts) || config.accounts.length === 0) && config.
 config.accountMode = config.accountMode === 'roundrobin' ? 'roundrobin' : 'single';
 const concurrencyLimit = (v) => Math.min(32, Math.max(1, Math.trunc(Number(v) || 1)));
 config.accountConcurrency = concurrencyLimit(config.accountConcurrency);
+const intRange = (v, min, max, fallback) => Number.isFinite(Number(v)) && String(v).trim() !== ''
+  ? Math.min(max, Math.max(min, Math.trunc(Number(v)))) : fallback;
+config.globalConcurrency = intRange(config.globalConcurrency, 1, 128, 3);
+config.globalRpm = intRange(config.globalRpm, 0, 60000, 0);
+config.maxRetries = intRange(config.maxRetries, 0, 10, 2);
+config.rateLimitSwitchRetries = intRange(config.rateLimitSwitchRetries, 0, 10, 1);
+config.retryIntervalMs = intRange(config.retryIntervalMs, 0, 30000, 0);
+config.transportRetryStrategy = config.transportRetryStrategy === 'sticky' ? 'sticky' : 'switch';
 
 // perModel 配置升级：旧版单 upstream 迁移为有序多上游列表（upstream 保留为回滚兼容镜像）
 (function migratePerModel() {
@@ -124,50 +138,66 @@ if (!isConfigured()) {
 
 // 账号选择：roundrobin 在启用的账号间轮询；single 使用 activeAccount 指定的账号
 let RR_COUNTER = 0;
-// 每个账号独立的并发槽位。默认每个账号同时只执行 1 个上游请求，
-// 轮询模式下不同账号仍可并行；等待中的请求会在槽位释放后继续。
+// 一个调度队列同时检查全局并发、单账号并发和滑动 60 秒 RPM。
 const ACCOUNT_SLOTS = new Map();
+const SCHEDULER = { active: 0, queue: [], starts: [], timer: null };
 function accountSlotState(acc) {
   const key = String(acc?.key || 'default');
   let state = ACCOUNT_SLOTS.get(key);
-  if (!state) { state = { key, active: 0, queue: [] }; ACCOUNT_SLOTS.set(key, state); }
+  if (!state) { state = { key, active: 0 }; ACCOUNT_SLOTS.set(key, state); }
   return state;
 }
-function drainAccountSlots(state) {
-  const limit = concurrencyLimit(config.accountConcurrency);
-  while (state.active < limit && state.queue.length) {
-    const waiter = state.queue.shift();
-    if (waiter.signal?.aborted) { waiter.reject(new Error('request aborted while waiting for account slot')); continue; }
-    state.active++;
-    if (waiter.signal) waiter.signal.removeEventListener('abort', waiter.onAbort);
+function drainAccountSlots() {
+  if (SCHEDULER.timer) { clearTimeout(SCHEDULER.timer); SCHEDULER.timer = null; }
+  const now = Date.now();
+  while (SCHEDULER.starts.length && SCHEDULER.starts[0] <= now - 60000) SCHEDULER.starts.shift();
+  for (let i = 0; i < SCHEDULER.queue.length && SCHEDULER.active < config.globalConcurrency;) {
+    if (config.globalRpm && SCHEDULER.starts.length >= config.globalRpm) break;
+    const waiter = SCHEDULER.queue[i];
+    if (waiter.state.active >= config.accountConcurrency) { i++; continue; }
+    SCHEDULER.queue.splice(i, 1);
+    waiter.signal?.removeEventListener('abort', waiter.onAbort);
+    waiter.state.active++;
+    SCHEDULER.active++;
+    if (config.globalRpm) SCHEDULER.starts.push(Date.now());
     waiter.resolve(() => {
       if (waiter.released) return;
       waiter.released = true;
-      state.active = Math.max(0, state.active - 1);
-      drainAccountSlots(state);
-      if (!state.active && !state.queue.length) ACCOUNT_SLOTS.delete(state.key);
+      waiter.state.active--;
+      SCHEDULER.active--;
+      if (!waiter.state.active && !SCHEDULER.queue.some((w) => w.state === waiter.state)) ACCOUNT_SLOTS.delete(waiter.state.key);
+      drainAccountSlots();
     });
+  }
+  if (SCHEDULER.queue.length && config.globalRpm && SCHEDULER.starts.length >= config.globalRpm) {
+    SCHEDULER.timer = setTimeout(drainAccountSlots, Math.max(1, SCHEDULER.starts[0] + 60000 - Date.now()));
+    SCHEDULER.timer.unref?.();
   }
 }
 function acquireAccountSlot(acc, signal) {
-  const state = accountSlotState(acc);
   return new Promise((resolve, reject) => {
-    if (state.queue.length >= 100) return reject(new Error('account request queue is full'));
-    const waiter = { resolve, reject, signal, released: false, onAbort: null };
+    if (SCHEDULER.queue.length >= 200) return reject(new Error('upstream request queue is full'));
     if (signal?.aborted) return reject(new Error('request aborted while waiting for account slot'));
+    const state = accountSlotState(acc);
+    const waiter = { state, resolve, reject, signal, released: false, onAbort: null };
     waiter.onAbort = () => {
-      const i = state.queue.indexOf(waiter);
-      if (i >= 0) state.queue.splice(i, 1);
+      const i = SCHEDULER.queue.indexOf(waiter);
+      if (i < 0) return;
+      SCHEDULER.queue.splice(i, 1);
+      signal?.removeEventListener('abort', waiter.onAbort);
+      if (!state.active && !SCHEDULER.queue.some((w) => w.state === state)) ACCOUNT_SLOTS.delete(state.key);
       reject(new Error('request aborted while waiting for account slot'));
+      drainAccountSlots();
     };
     if (signal) signal.addEventListener('abort', waiter.onAbort, { once: true });
-    state.queue.push(waiter);
-    drainAccountSlots(state);
+    SCHEDULER.queue.push(waiter);
+    drainAccountSlots();
   });
 }
 function accountSlotSnapshot(acc) {
-  const s = accountSlotState(acc);
-  return { active: s.active, queued: s.queue.length, limit: concurrencyLimit(config.accountConcurrency) };
+  const key = String(acc?.key || 'default');
+  const s = ACCOUNT_SLOTS.get(key);
+  return { active: s?.active || 0, queued: SCHEDULER.queue.filter((w) => w.state.key === key).length, limit: config.accountConcurrency };
 }
 async function fetchJSONWithAccount(acc, url, opts = {}, timeoutMs = 60000) {
   let release;
@@ -204,10 +234,8 @@ async function fetchAccountUsage(acc, force = false) {
   if (!force && cached && Date.now() - cached.checkedAt < 30000) return { ...cached, account: acc.name };
   let result;
   let error;
-  let release;
   try {
-    release = await acquireAccountSlot(acc);
-    const me = await fetchJSON(`${config.upstreamBase}/users/me`, { headers: chatHeaders(acc.key) }, 10000);
+    const me = await fetchJSONWithAccount(acc, `${config.upstreamBase}/users/me`, { headers: chatHeaders(acc.key) }, 10000);
     const user = me.json?.data || me.json;
     const id = user?.uid || user?.id;
     if (me.status === 401 || me.status === 403) {
@@ -216,7 +244,7 @@ async function fetchAccountUsage(acc, force = false) {
       error = `账户资料接口不可用（HTTP ${me.status}）`;
     } else {
       const path = `/users/${encodeURIComponent(String(id))}/balance`;
-      const balance = await fetchJSON(`${config.upstreamBase}${path}`, { headers: chatHeaders(acc.key) }, 10000);
+      const balance = await fetchJSONWithAccount(acc, `${config.upstreamBase}${path}`, { headers: chatHeaders(acc.key) }, 10000);
       if (balance.status === 200) {
         result = normalizeUsage(balance.json, path);
         if (result) result = { ...result, unit: 'credits' };
@@ -226,7 +254,6 @@ async function fetchAccountUsage(acc, force = false) {
       } else error = `官方余额接口不可用（HTTP ${balance.status}）`;
     }
   } catch (e) { error = e.message; }
-  finally { release?.(); }
   const out = result
     ? { ...result, ok: true, checkedAt: Date.now(), account: acc.name }
     : { ok: false, account: acc.name, checkedAt: Date.now(), error: error || '额度不可用' };
@@ -275,6 +302,13 @@ function pickAccount() {
   const byIdx = config.accounts[config.activeAccount];
   if (byIdx && byIdx.key && byIdx.enabled !== false) return byIdx;
   return list[0];
+}
+function nextPoolAccount(current) {
+  if (config.accountMode !== 'roundrobin') return null;
+  const list = enabledAccounts();
+  if (list.length < 2) return null;
+  const i = list.findIndex((a) => a.key === current?.key);
+  return list[(i + 1 + list.length) % list.length];
 }
 const chatHeaders = (key) => ({
   'Content-Type': 'application/json',
@@ -685,12 +719,22 @@ function buildAttempts(modelId, cfg) {
 
 // 把上游错误信息归一成短字符串（用于学习与尝试日志）
 const errText = (e) => (e == null ? '' : typeof e === 'string' ? e : JSON.stringify(e));
+const isRateLimited = (status, message) => status === 429 || /(?:\b429\b|rate[ -]?limit|too many requests)/i.test(String(message || ''));
+function waitRetry(ms, signal) {
+  if (!ms) return Promise.resolve(!signal.aborted);
+  return new Promise((resolve) => {
+    if (signal.aborted) return resolve(false);
+    const done = (ok) => { clearTimeout(timer); signal.removeEventListener('abort', onAbort); resolve(ok); };
+    const onAbort = () => done(false);
+    const timer = setTimeout(() => done(true), ms);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
 
 // 单次向上游网关发起非流式请求；返回 { status, out, routing, netError, acc }
 // 异常（网络错误/非 JSON/非 200）不抛出，由调用方决定切换
-async function attemptOnce(modelId, body, attempt, signal) {
+async function attemptOnce(modelId, body, attempt, acc, signal) {
   const send = injectPrefs(body, modelId, attempt);
-  const acc = pickAccount();
   let release;
   try {
     release = await acquireAccountSlot(acc, signal);
@@ -698,9 +742,10 @@ async function attemptOnce(modelId, body, attempt, signal) {
       method: 'POST', headers: chatHeaders(acc.key), body: JSON.stringify(send), signal,
     });
     const json = await res.json().catch(() => null);
-    if (!json) return { status: 502, out: { error: { message: 'upstream returned non-JSON', type: 'upstream_error' } }, routing: {}, netError: 'non-JSON response', acc };
+    if (!json) return { status: res.status === 200 ? 502 : res.status, out: { error: { message: 'upstream returned non-JSON', type: 'upstream_error' } }, routing: {}, netError: 'non-JSON response', acc };
     const { status, body: out, routing } = unwrap(json);
-    return { status, out, routing, netError: null, acc };
+    const effectiveStatus = res.status === 200 && isRateLimited(status, out?.error?.message) ? 429 : res.status === 200 ? status : res.status;
+    return { status: effectiveStatus, out, routing, netError: null, acc };
   } catch (e) {
     return { status: 502, out: { error: { message: `upstream fetch failed: ${e.message}`, type: 'upstream_error' } }, routing: {}, netError: e.message, acc };
   } finally {
@@ -708,7 +753,7 @@ async function attemptOnce(modelId, body, attempt, signal) {
   }
 }
 
-// 顺序故障转移：依次执行候选，非 200 / 网络失败 / 超时即切换下一个；全部失败返回最后一次结果。
+// 顺序故障转移：本候选按调度策略重试后仍失败，再切换下一个；全部失败返回最后一次结果。
 // 流式：首包前（网关以 JSON 而非 SSE 应答错误）仍可切换；SSE 一旦开始即透传，无法重试。
 // 每次尝试有独立的超时中止（attemptTimeoutMs）；客户端断开会中止当前尝试。
 // 返回 { status, out, routing, acc, trace, streamUp? } —— trace 为逐次尝试 [{ upstream, status, ms, note }]
@@ -717,105 +762,105 @@ async function runChatChain(req, body, modelId, cfg, { stream = false, attemptTi
   const trace = [];
   const t0 = Date.now();
   let last = null;
-  let activeCtrl = null;            // 当前尝试的 AbortController；流式成功后保持指向该次 fetch，用于断连时中止上游 body
-  let keepCloseHook = false;        // 流式 SSE 建立后，close 钩子要保留到流结束
-  const onClientClose = () => { if (activeCtrl) activeCtrl.abort(); };
-  req.on('close', onClientClose);
+  let activeCtrl = null;
+  let keepCloseHook = false;
+  let retries = 0;
+  let rateSwitches = 0;
+  const clientCtrl = new AbortController();
+  // IncomingMessage 的 close 在请求体读完后也可能触发；监听 socket 才代表客户端离开。
+  const onClientClose = () => { clientCtrl.abort(); activeCtrl?.abort(); };
+  req.socket.on('close', onClientClose);
   try {
     for (const attempt of attempts) {
-      const t1 = Date.now();
-      const ctrl = new AbortController();
-      activeCtrl = ctrl;
-      const timer = setTimeout(() => ctrl.abort(), attemptTimeoutMs);
-      let release;
-      try {
-        if (stream) {
-          const send = injectPrefs(body, modelId, attempt);
-          const acc = pickAccount();
-          let up = null;
-          let netError = null;
-          try {
-            release = await acquireAccountSlot(acc, ctrl.signal);
-            up = await fetch(`${config.upstreamBase}/chat/completions`, { method: 'POST', headers: chatHeaders(acc.key), body: JSON.stringify(send), signal: ctrl.signal });
-          } catch (e) { netError = e.message; }
-          const ctype = up?.headers?.get('content-type') || '';
-          let isSSE = !!up && up.status === 200 && ctype.includes('event-stream');
-          // 网关对流式错误可能返回 200 + text/event-stream，body 却是 {"error":...}：
-          // 读首个数据块探测，真正的 SSE 第一行是 "data: {...}" 且非纯错误对象
-          let firstChunk = null;
-          if (isSSE) {
-            let reader = null;
+      let acc = pickAccount();
+      while (!clientCtrl.signal.aborted) {
+        const t1 = Date.now();
+        const ctrl = new AbortController();
+        activeCtrl = ctrl;
+        const timer = setTimeout(() => ctrl.abort(), attemptTimeoutMs);
+        let release;
+        try {
+          if (stream) {
+            const send = injectPrefs(body, modelId, attempt);
+            let up = null;
+            let netError = null;
             try {
-              reader = up.body.getReader();
-              const { value, done } = await reader.read();
-              if (done) {
-                isSSE = false;
-                netError = 'empty stream';
-              } else {
-                firstChunk = Buffer.from(value);
-                const head = firstChunk.toString('utf8').trimStart().slice(0, 200);
-                if (head.startsWith('data:')) {
-                  const payload = head.replace(/^data:\s*/, '').slice(0, 160);
-                  if (payload.startsWith('{"error"')) { isSSE = false; netError = `stream error: ${payload.slice(0, 120)}`; }
-                } else {
-                  isSSE = false;
-                  netError = `unexpected stream head: ${head.slice(0, 60)}`;
+              release = await acquireAccountSlot(acc, ctrl.signal);
+              up = await fetch(`${config.upstreamBase}/chat/completions`, { method: 'POST', headers: chatHeaders(acc.key), body: JSON.stringify(send), signal: ctrl.signal });
+            } catch (e) { netError = e.message; }
+            const ctype = up?.headers?.get('content-type') || '';
+            let isSSE = !!up && up.status === 200 && ctype.includes('event-stream');
+            let firstChunk = null;
+            if (isSSE) {
+              let reader = null;
+              try {
+                reader = up.body.getReader();
+                const pieces = [];
+                let size = 0;
+                while (size < 4096) {
+                  const { value, done } = await reader.read();
+                  if (done) break;
+                  pieces.push(Buffer.from(value));
+                  size += value.length;
+                  if (Buffer.concat(pieces).includes(10)) break;
                 }
-              }
-            } catch (e) {
-              isSSE = false;
-              netError = e.message;
-            } finally {
-              try { reader?.releaseLock(); } catch {}
+                firstChunk = Buffer.concat(pieces);
+                if (!firstChunk.length) { isSSE = false; netError = 'empty stream'; }
+                else {
+                  const head = firstChunk.toString('utf8').trimStart().slice(0, 200);
+                  if (head.startsWith('data:')) {
+                    const payload = head.replace(/^data:\s*/, '').slice(0, 160);
+                    if (/^\{\s*"error"\s*:/.test(payload)) { isSSE = false; netError = `stream error: ${payload.slice(0, 120)}`; }
+                  } else if (!/^(:|event:|id:|retry:)/.test(head)) { isSSE = false; netError = `unexpected stream head: ${head.slice(0, 60)}`; }
+                }
+              } catch (e) { isSSE = false; netError = e.message; }
+              finally { try { reader?.releaseLock(); } catch {} }
             }
-          }
-          const ms = Date.now() - t1;
-          if (up && !isSSE) {
-            let text = '';
-            let json = null;
-            if (firstChunk) {
-              // 已消费的块 + 剩余 body 拼回完整错误文本
-              const rest = await up.text().catch(() => '');
-              text = firstChunk.toString('utf8') + rest;
+            if (up && isSSE) {
+              keepCloseHook = true;
+              trace.push({ upstream: attempt.upstream, account: acc.name, status: 200, ms: Date.now() - t1, note: 'stream' });
+              return { status: 200, streamUp: up, streamHead: firstChunk, acc, trace, t0, slotRelease: release, streamAbort: () => ctrl.abort(), streamCleanup: () => req.socket.off('close', onClientClose) };
+            }
+            if (up) {
+              const text = (firstChunk ? firstChunk.toString('utf8') : '') + await up.text().catch(() => '');
+              let json = null;
+              try { json = JSON.parse(text); } catch {}
+              const msg = errText(json?.error) || text.slice(0, 160) || netError || '';
+              const status = isRateLimited(up.status, msg) ? 429 : up.status === 200 ? 502 : up.status;
+              last = { status, out: json || { error: { message: msg.slice(0, 400), type: 'upstream_error' } }, routing: parseRouting(json || {}), acc, netError: netError && !isRateLimited(status, msg) ? netError : null };
             } else {
-              text = await up.text();
+              last = { status: 502, out: { error: { message: `upstream fetch failed: ${netError || 'no response'}`, type: 'upstream_error' } }, routing: {}, acc, netError: netError || 'no response' };
             }
-            try { json = JSON.parse(text); } catch {}
-            const msg = errText(json?.error) || text.slice(0, 160) || netError;
-            trace.push({ upstream: attempt.upstream, status: up.status, ms, note: msg.slice(0, 160) });
-            if (attempt.upstream) learnUpstreamStatus(modelId, attempt.upstream, msg);
-            if (!attempt.upstream && (attempt.excludeList || []).length) learnAvailableProviders(modelId, msg);
-            last = { status: json?.error ? 502 : up.status, out: json || { error: { message: text.slice(0, 400) || netError, type: 'upstream_error' } }, routing: parseRouting(json || {}), acc, netError: null };
-            release?.();
-            continue; // 错误：还未向客户端写任何字节，可切换下一候选
+          } else {
+            last = await attemptOnce(modelId, body, attempt, acc, ctrl.signal);
           }
-          if (!up) {
-            trace.push({ upstream: attempt.upstream, status: 502, ms, note: netError || 'no response' });
-            last = { status: 502, out: { error: { message: `upstream fetch failed: ${netError || 'no response'}`, type: 'upstream_error' } }, routing: {}, acc, netError: netError || 'no response' };
-            release?.();
-            continue;
-          }
-          // 真 SSE：firstChunk 与剩余 body 串联透传（SSE 开始后无法重试）；close 钩子保留用于客户端断开时中止上游
-          keepCloseHook = true;
-          trace.push({ upstream: attempt.upstream, status: 200, ms, note: 'stream' });
-          return { status: 200, streamUp: up, streamHead: firstChunk, acc, trace, t0, slotRelease: release, streamAbort: () => ctrl.abort() };
+        } finally {
+          clearTimeout(timer);
+          if (!keepCloseHook) release?.();
         }
-        // 非流式
-        const r = await attemptOnce(modelId, body, attempt, ctrl.signal);
-        const ms = Date.now() - t1;
-        const note = r.netError || (r.status !== 200 ? errText(r.out?.error?.message).slice(0, 160) : 'ok');
-        trace.push({ upstream: attempt.upstream, status: r.status, ms, note });
-        if (r.status !== 200 && attempt.upstream) learnUpstreamStatus(modelId, attempt.upstream, errText(r.out?.error?.message));
-        if (r.status !== 200 && !attempt.upstream && (attempt.excludeList || []).length) learnAvailableProviders(modelId, r.netError || note);
-        last = r;
-        if (r.status === 200) break;
-      } finally {
-        clearTimeout(timer);
-        if (!keepCloseHook) release?.();
+        const note = last.netError || (last.status === 200 ? 'ok' : errText(last.out?.error?.message || last.out?.error).slice(0, 160));
+        trace.push({ upstream: attempt.upstream, account: acc.name, status: last.status, ms: Date.now() - t1, note });
+        if (last.status === 200) break;
+        if (attempt.upstream) learnUpstreamStatus(modelId, attempt.upstream, note);
+        if (!attempt.upstream && (attempt.excludeList || []).length) learnAvailableProviders(modelId, note);
+        if (clientCtrl.signal.aborted || retries >= config.maxRetries) break;
+        let next = acc;
+        if (isRateLimited(last.status, note)) {
+          if (rateSwitches >= config.rateLimitSwitchRetries) break;
+          next = nextPoolAccount(acc);
+          if (!next) break;
+          rateSwitches++;
+        } else if (last.netError) {
+          if (config.transportRetryStrategy === 'switch') next = nextPoolAccount(acc) || acc;
+        } else if (last.status !== 408 && last.status < 500) break;
+        retries++;
+        if (!await waitRetry(config.retryIntervalMs, clientCtrl.signal)) break;
+        acc = next;
       }
+      if (last?.status === 200 || clientCtrl.signal.aborted) break;
     }
   } finally {
-    if (!keepCloseHook) req.off('close', onClientClose);
+    if (!keepCloseHook) req.socket.off('close', onClientClose);
   }
   return { ...last, status: last?.status ?? 502, trace, t0, netError: last?.netError || null };
 }
@@ -851,7 +896,7 @@ async function handleChat(req, res) {
     if (chain.streamHead) res.write(chain.streamHead);
     let tail = Buffer.alloc(0);
     let released = false;
-    const releaseSlot = () => { if (!released) { released = true; chain.slotRelease?.(); } };
+    const releaseSlot = () => { if (!released) { released = true; chain.slotRelease?.(); chain.streamCleanup?.(); } };
     const tap = new Transform({
       transform(c, enc, cb) {
         // 只保留末尾 64 KiB 用于解析路由元数据，避免长流式回复占满内存。
@@ -1015,6 +1060,13 @@ const server = http.createServer(async (req, res) => {
         mode: config.accountMode,
         active: config.activeAccount,
         accountConcurrency: config.accountConcurrency,
+        globalConcurrency: config.globalConcurrency,
+        globalRpm: config.globalRpm,
+        maxRetries: config.maxRetries,
+        rateLimitSwitchRetries: config.rateLimitSwitchRetries,
+        retryIntervalMs: config.retryIntervalMs,
+        transportRetryStrategy: config.transportRetryStrategy,
+        scheduling: { active: SCHEDULER.active, queued: SCHEDULER.queue.length },
         stats: META.stats || {},
       });
     }
@@ -1036,9 +1088,16 @@ const server = http.createServer(async (req, res) => {
       config.accountMode = body.mode === 'roundrobin' ? 'roundrobin' : 'single';
       config.activeAccount = Math.min(Math.max(0, Number(body.active) || 0), accs.length - 1);
       if (body.accountConcurrency !== undefined) config.accountConcurrency = concurrencyLimit(body.accountConcurrency);
+      if (body.globalConcurrency !== undefined) config.globalConcurrency = intRange(body.globalConcurrency, 1, 128, 3);
+      if (body.globalRpm !== undefined) config.globalRpm = intRange(body.globalRpm, 0, 60000, 0);
+      if (body.maxRetries !== undefined) config.maxRetries = intRange(body.maxRetries, 0, 10, 2);
+      if (body.rateLimitSwitchRetries !== undefined) config.rateLimitSwitchRetries = intRange(body.rateLimitSwitchRetries, 0, 10, 1);
+      if (body.retryIntervalMs !== undefined) config.retryIntervalMs = intRange(body.retryIntervalMs, 0, 30000, 0);
+      if (body.transportRetryStrategy !== undefined) config.transportRetryStrategy = body.transportRetryStrategy === 'sticky' ? 'sticky' : 'switch';
       saveConfig();
       RR_COUNTER = 0;
-      return sendJSON(res, 200, { ok: true, accounts: config.accounts.length, mode: config.accountMode, active: config.activeAccount, accountConcurrency: config.accountConcurrency });
+      drainAccountSlots();
+      return sendJSON(res, 200, { ok: true, accounts: config.accounts.length, mode: config.accountMode, active: config.activeAccount, accountConcurrency: config.accountConcurrency, globalConcurrency: config.globalConcurrency, globalRpm: config.globalRpm });
     }
     if (req.method === 'POST' && p === '/api/accounts/test') {
       const input = JSON.parse(await readBody(req).then((b) => b.toString()));
