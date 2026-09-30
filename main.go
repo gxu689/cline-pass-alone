@@ -246,6 +246,9 @@ type State struct {
 	corsOrigin   string
 	rrCounter    atomic.Uint64
 	client       *http.Client
+	coolMu       sync.Mutex
+	accountCool  map[string]time.Time
+	channelCool  map[string]time.Time
 }
 
 type apiError struct {
@@ -718,28 +721,35 @@ func enabledAccounts(cfg Config) []Account {
 	return result
 }
 
-func (s *State) pickAccount() (Account, error) {
-	s.mu.RLock()
-	cfg := s.config
-	s.mu.RUnlock()
+func (s *State) pickAccount(upstream string) (Account, error) {
+	cfg := s.configSnapshot()
 	accounts := enabledAccounts(cfg)
 	if len(accounts) == 0 {
 		return Account{}, &apiError{Status: 503, Message: "没有已启用的上游账号"}
 	}
+	now := time.Now()
 	if cfg.AccountMode == "roundrobin" && len(accounts) > 1 {
-		index := (s.rrCounter.Add(1) - 1) % uint64(len(accounts))
-		return accounts[index], nil
+		start := int((s.rrCounter.Add(1) - 1) % uint64(len(accounts)))
+		for i := 0; i < len(accounts); i++ {
+			account := accounts[(start+i)%len(accounts)]
+			if !s.blocked(account, upstream, now) {
+				return account, nil
+			}
+		}
+		return Account{}, &apiError{Status: 429, Message: s.coolMessage(accounts, upstream, now)}
 	}
+	account := accounts[0]
 	if cfg.ActiveAccount >= 0 && cfg.ActiveAccount < len(cfg.Accounts) && cfg.Accounts[cfg.ActiveAccount].Enabled && cfg.Accounts[cfg.ActiveAccount].Key != "" {
-		return cfg.Accounts[cfg.ActiveAccount], nil
+		account = cfg.Accounts[cfg.ActiveAccount]
 	}
-	return accounts[0], nil
+	if s.blocked(account, upstream, now) {
+		return Account{}, &apiError{Status: 429, Message: s.coolMessage([]Account{account}, upstream, now)}
+	}
+	return account, nil
 }
 
-func (s *State) nextPoolAccount(current Account) (Account, bool) {
-	s.mu.RLock()
-	cfg := s.config
-	s.mu.RUnlock()
+func (s *State) nextPoolAccount(current Account, upstream string) (Account, bool) {
+	cfg := s.configSnapshot()
 	if cfg.AccountMode != "roundrobin" {
 		return Account{}, false
 	}
@@ -747,12 +757,184 @@ func (s *State) nextPoolAccount(current Account) (Account, bool) {
 	if len(accounts) < 2 {
 		return Account{}, false
 	}
+	start := -1
 	for i, account := range accounts {
 		if account.Key == current.Key {
-			return accounts[(i+1)%len(accounts)], true
+			start = i
+			break
 		}
 	}
-	return accounts[0], true
+	now := time.Now()
+	for step := 1; step < len(accounts); step++ {
+		next := accounts[(start+step)%len(accounts)]
+		if !s.blocked(next, upstream, now) {
+			return next, true
+		}
+	}
+	return Account{}, false
+}
+
+func (s *State) blocked(account Account, upstream string, now time.Time) bool {
+	s.coolMu.Lock()
+	defer s.coolMu.Unlock()
+	if until, ok := s.accountCool[accountID(account.Key)]; ok && until.After(now) {
+		return true
+	}
+	if upstream == "" {
+		return false
+	}
+	until, ok := s.channelCool[accountID(account.Key)+"\n"+slugify(upstream)]
+	return ok && until.After(now)
+}
+
+func (s *State) coolMessage(accounts []Account, upstream string, now time.Time) string {
+	short := false
+	for _, account := range accounts {
+		s.coolMu.Lock()
+		until, ok := s.accountCool[accountID(account.Key)]
+		s.coolMu.Unlock()
+		if !ok || !until.After(now) {
+			return "渠道冷却中"
+		}
+		if until.Sub(now) <= 2*time.Minute {
+			short = true
+		}
+	}
+	if short {
+		return "账号冷却中"
+	}
+	return "账号 5 小时额度冷却中"
+}
+
+func (s *State) markCool(accountLevel bool, id, channel string, until time.Time) {
+	s.coolMu.Lock()
+	defer s.coolMu.Unlock()
+	if accountLevel {
+		if s.accountCool == nil {
+			s.accountCool = map[string]time.Time{}
+		}
+		if current, ok := s.accountCool[id]; !ok || until.After(current) {
+			s.accountCool[id] = until
+		}
+		return
+	}
+	if s.channelCool == nil {
+		s.channelCool = map[string]time.Time{}
+	}
+	key := id + "\n" + channel
+	if current, ok := s.channelCool[key]; !ok || until.After(current) {
+		s.channelCool[key] = until
+	}
+}
+
+func (s *State) cooledChannels(account Account, now time.Time) []string {
+	prefix := accountID(account.Key) + "\n"
+	s.coolMu.Lock()
+	defer s.coolMu.Unlock()
+	names := []string{}
+	for key, until := range s.channelCool {
+		if strings.HasPrefix(key, prefix) && until.After(now) {
+			names = append(names, strings.TrimPrefix(key, prefix))
+		}
+	}
+	return names
+}
+
+func (s *State) withChannelCool(account Account, model string, attempt map[string]any) (map[string]any, bool) {
+	cooled := s.cooledChannels(account, time.Now())
+	if len(cooled) == 0 {
+		return attempt, true
+	}
+	upstream := stringValue(attempt["upstream"])
+	if upstream != "" && contains(cooled, slugify(upstream)) {
+		return nil, false
+	}
+	merged := unique(append(arrayStrings(attempt["excludeList"]), cooled...))
+	if upstream == "" && len(without(arrayStrings(s.modelMeta(model)["upstreams"]), merged)) == 0 {
+		return nil, false
+	}
+	next := make(map[string]any, len(attempt))
+	for key, value := range attempt {
+		next[key] = value
+	}
+	next["excludeList"] = toAny(merged)
+	return next, true
+}
+
+func passLimited(note string) bool {
+	lower := strings.ToLower(note)
+	return strings.Contains(lower, "clinepass") && strings.Contains(lower, "limit")
+}
+
+func retryAfter(header http.Header, now time.Time) time.Duration {
+	wait := time.Minute
+	value := strings.TrimSpace(header.Get("Retry-After"))
+	if seconds, err := strconv.Atoi(value); err == nil && seconds > 0 {
+		wait = time.Duration(seconds) * time.Second
+	} else if at, err := http.ParseTime(value); err == nil {
+		wait = at.Sub(now)
+	}
+	if wait < time.Second {
+		return time.Minute
+	}
+	if wait > time.Hour {
+		return time.Hour // ponytail: channel Retry-After above an hour is ignored
+	}
+	return wait
+}
+
+func (s *State) note429(account Account, upstream, provider, note string, header http.Header) {
+	if passLimited(note) {
+		s.markCool(true, accountID(account.Key), "", s.passReset(account))
+		return
+	}
+	channel := slugify(upstream)
+	if channel == "" {
+		channel = slugify(provider)
+	}
+	wait := time.Now().Add(retryAfter(header, time.Now()))
+	if channel != "" && validUpstream(channel) {
+		s.markCool(false, accountID(account.Key), channel, wait)
+		return
+	}
+	s.markCool(true, accountID(account.Key), "", wait)
+}
+
+func (s *State) passReset(account Account) time.Time {
+	now := time.Now()
+	base := strings.TrimRight(s.configSnapshot().UpstreamBase, "/")
+	code, payload, _, err := s.fetchJSON(context.Background(), http.MethodGet, base+"/users/me/plan/usage-limits", s.chatHeaders(account.Key), nil, 8*time.Second)
+	if err != nil || code != http.StatusOK {
+		return now.Add(time.Minute)
+	}
+	return passResetTime(payload, now)
+}
+
+func passResetTime(payload map[string]any, now time.Time) time.Time {
+	data := mapValue(payload["data"])
+	if data == nil {
+		data = payload
+	}
+	var until time.Time
+	if limits, ok := data["limits"].([]any); ok {
+		for _, raw := range limits {
+			item := mapValue(raw)
+			if item == nil || firstNumber(item["percentUsed"]) < 100 {
+				continue
+			}
+			at, ok := parseUsageTime(stringValue(item["resetsAt"]))
+			if ok && at.After(until) {
+				until = at
+			}
+		}
+	}
+	if !until.After(now) {
+		return now.Add(time.Minute)
+	}
+	if until.After(now.Add(31 * 24 * time.Hour)) {
+		return now.Add(31 * 24 * time.Hour)
+	}
+	return until
 }
 
 func (s *State) acquireSlot(ctx context.Context, accountKey string) (func(), error) {
@@ -1588,20 +1770,53 @@ func (s *State) runChatChain(req *http.Request, body map[string]any, model strin
 	for _, attempt := range attempts {
 		var account Account
 		for retry := 0; retry <= s.configSnapshot().MaxRetries; retry++ {
+			upstreamName := stringValue(attempt["upstream"])
 			rateSwitch := retry > 0 && last != nil && len(last.Trace) > 0 && last.Trace[len(last.Trace)-1].Status == 429
-			if retry == 0 || (!rateSwitch && s.configSnapshot().TransportRetryStrategy != "sticky") {
-				selected, err := s.pickAccount()
-				if err != nil {
-					return &chatResult{Status: 503, Payload: map[string]any{"error": map[string]any{"message": err.Error(), "type": "auth_error"}}, Started: started}, nil
-				}
-				account = selected
-			} else if rateSwitch {
-				if next, ok := s.nextPoolAccount(account); ok {
+			var sendAttempt map[string]any
+			ready := false
+			var pickErr error
+			hops := len(s.enabledAccounts())
+			if hops < 1 {
+				hops = 1
+			}
+			for hop := 0; hop < hops; hop++ {
+				if hop == 0 {
+					if retry == 0 || (!rateSwitch && s.configSnapshot().TransportRetryStrategy != "sticky") {
+						account, pickErr = s.pickAccount(upstreamName)
+						if pickErr != nil {
+							break
+						}
+					} else if rateSwitch {
+						if next, ok := s.nextPoolAccount(account, upstreamName); ok {
+							account = next
+						}
+					}
+				} else if next, ok := s.nextPoolAccount(account, upstreamName); ok {
 					account = next
+				} else {
+					break
+				}
+				if s.blocked(account, upstreamName, time.Now()) {
+					continue
+				}
+				if sendAttempt, ready = s.withChannelCool(account, model, attempt); ready {
+					break
 				}
 			}
+			if !ready {
+				var limit *apiError
+				if errors.As(pickErr, &limit) && limit.Status == 429 {
+					last = &chatResult{Status: 429, Payload: map[string]any{"error": map[string]any{"message": limit.Message, "type": "rate_limit"}}, Started: started}
+					break
+				}
+				if pickErr != nil {
+					return &chatResult{Status: 503, Payload: map[string]any{"error": map[string]any{"message": pickErr.Error(), "type": "auth_error"}}, Started: started}, nil
+				}
+				last = &chatResult{Status: 429, Payload: map[string]any{"error": map[string]any{"message": "渠道冷却中", "type": "rate_limit"}}, Account: account, Started: started}
+				break
+			}
 			ctx, cancel, stopHeader := attemptContext(req.Context(), timeout, stream)
-			send := s.injectPrefs(body, model, attempt)
+			send := s.injectPrefs(body, model, sendAttempt)
 			encoded, _ := json.Marshal(send)
 			release, err := s.acquireSlot(ctx, account.Key)
 			if err != nil {
@@ -1681,6 +1896,9 @@ func (s *State) runChatChain(req *http.Request, body map[string]any, model strin
 			last = current
 			if status >= 200 && status < 300 && readErr == nil && mapValue(payload["error"]) == nil {
 				return current, nil
+			}
+			if status == 429 {
+				s.note429(account, stringValue(attempt["upstream"]), stringValue(routing["finalProvider"]), note, response.Header)
 			}
 			if note != "" {
 				s.learnUpstreamStatus(model, stringValue(attempt["upstream"]), note)
@@ -2172,65 +2390,30 @@ func (s *State) accountUsage(account Account, force bool) map[string]any {
 	cached := s.metadata.AccountUsage[id]
 	base := s.config.UpstreamBase
 	s.mu.RUnlock()
-	if !force && cached != nil && time.Since(time.UnixMilli(int64(firstNumber(cached["checkedAt"])))) < 30*time.Second {
+	if !force && cached != nil && time.Since(time.UnixMilli(int64(firstNumber(cached["checkedAt"])))) < 10*time.Minute {
 		result := cloneMap(cached)
 		result["account"] = account.Name
 		result["id"] = id
 		return result
 	}
-	status, user, _, err := s.fetchJSON(context.Background(), http.MethodGet, strings.TrimRight(base, "/")+"/users/me", s.chatHeaders(account.Key), nil, 10*time.Second)
+	code, payload, _, err := s.fetchJSON(context.Background(), http.MethodGet, strings.TrimRight(base, "/")+"/users/me/plan/usage-limits", s.chatHeaders(account.Key), nil, 10*time.Second)
 	result := map[string]any{"account": account.Name, "id": id, "checkedAt": time.Now().UnixMilli()}
 	if err != nil {
 		result["ok"] = false
 		result["error"] = err.Error()
-	} else if status == 401 || status == 403 {
+	} else if code == http.StatusUnauthorized || code == http.StatusForbidden {
 		result["ok"] = false
 		result["error"] = "此 API Key 无权读取 Cline 账户资料；需账户登录令牌才能查询官方余额"
+	} else if code != http.StatusOK {
+		result["ok"] = false
+		result["error"] = fmt.Sprintf("额度接口不可用（HTTP %d）", code)
+	} else if periods := passPeriods(payload); len(periods) == 0 {
+		result["ok"] = false
+		result["error"] = "此账号没有 Cline Pass 额度"
 	} else {
-		userData := mapValue(user["data"])
-		if userData == nil {
-			userData = user
-		}
-		uid := stringValue(userData["uid"])
-		if uid == "" {
-			uid = stringValue(userData["id"])
-		}
-		if uid == "" {
-			result["ok"] = false
-			result["error"] = fmt.Sprintf("账户资料接口不可用（HTTP %d）", status)
-		} else {
-			found := false
-			userBase := strings.TrimRight(base, "/") + "/users/" + url.PathEscape(uid)
-			targets := []struct{ source, endpoint string }{
-				{"/balance", userBase + "/balance"},
-				{"/usage", userBase + "/usage"},
-			}
-			if orgID := activeOrganizationID(userData); orgID != "" {
-				targets = append([]struct{ source, endpoint string }{{"/organizations/balance", strings.TrimRight(base, "/") + "/organizations/" + url.PathEscape(orgID) + "/balance"}}, targets...)
-			}
-			for _, target := range targets {
-				code, payload, _, requestErr := s.fetchJSON(context.Background(), http.MethodGet, target.endpoint, s.chatHeaders(account.Key), nil, 10*time.Second)
-				if requestErr != nil {
-					continue
-				}
-				periods := normalizeUsagePeriods(payload)
-				summary := normalizeUsage(payload, target.source)
-				if code == 200 && (len(periods) > 0 || summary != nil) {
-					result["ok"] = true
-					for key, value := range summary {
-						result[key] = value
-					}
-					result["periods"] = periods
-					result["source"] = target.source
-					found = true
-					break
-				}
-			}
-			if !found {
-				result["ok"] = false
-				result["error"] = "官方用量接口不可用"
-			}
-		}
+		result["ok"] = true
+		result["periods"] = periods
+		result["source"] = "/users/me/plan/usage-limits"
 	}
 	s.mu.Lock()
 	s.metadata.AccountUsage[id] = cloneMap(result)
@@ -2292,108 +2475,47 @@ func cloneMap(value map[string]any) map[string]any {
 	}
 	return result
 }
-func normalizeUsage(value map[string]any, source string) map[string]any {
-	root := value
-	if data := mapValue(value["data"]); data != nil {
-		root = data
+
+func passPeriods(payload map[string]any) []map[string]any {
+	data := mapValue(payload["data"])
+	if data == nil {
+		data = payload
 	}
-	result := map[string]any{}
-	for _, key := range []string{"used", "limit", "remaining", "resetAt", "unit"} {
-		if item, ok := root[key]; ok {
-			result[key] = item
-		}
-	}
-	if _, ok := result["remaining"]; !ok {
-		if balance := numberOrNil(root["balance"]); balance != nil {
-			result["remaining"] = *balance / 100
-			if _, ok := result["unit"]; !ok {
-				result["unit"] = "credits"
-			}
-		}
-	}
-	if len(result) == 0 {
-		return nil
-	}
-	result["source"] = source
-	return result
-}
-func activeOrganizationID(user map[string]any) string {
-	orgs, _ := user["organizations"].([]any)
-	for _, raw := range orgs {
+	limits, _ := data["limits"].([]any)
+	labels := map[string]string{"five_hour": "5小时", "weekly": "本周", "monthly": "本月"}
+	byType := map[string]map[string]any{}
+	for _, raw := range limits {
 		item := mapValue(raw)
-		if item == nil || item["active"] != true {
+		if item == nil {
 			continue
 		}
-		if id := stringValue(item["organizationId"]); id != "" {
-			return id
+		kind := stringValue(item["type"])
+		label := labels[kind]
+		if label == "" {
+			label = kind
 		}
-		if id := stringValue(item["id"]); id != "" {
-			return id
+		row := map[string]any{"label": label, "percent": firstNumber(item["percentUsed"]), "type": kind}
+		if at, ok := parseUsageTime(stringValue(item["resetsAt"])); ok {
+			row["resetsAt"] = at.UnixMilli()
+		}
+		byType[kind] = row
+	}
+	periods := []map[string]any{}
+	for _, kind := range []string{"five_hour", "weekly", "monthly"} {
+		if row, ok := byType[kind]; ok {
+			periods = append(periods, row)
 		}
 	}
-	return ""
+	return periods
 }
-func normalizeUsagePeriods(value map[string]any) []map[string]any {
-	root := value
-	if data := mapValue(value["data"]); data != nil {
-		root = data
-	}
-	source := root
-	for _, key := range []string{"periods", "windows", "limits", "usage"} {
-		if item := mapValue(root[key]); item != nil {
-			source = item
-			break
+
+func parseUsageTime(value string) (time.Time, bool) {
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+		if at, err := time.Parse(layout, value); err == nil {
+			return at, true
 		}
 	}
-	result := []map[string]any{}
-	periods := []struct {
-		label string
-		names []string
-	}{
-		{"5h", []string{"5h", "fiveHour", "five_hour", "rolling5h", "rolling_5h"}},
-		{"7d", []string{"7d", "7day", "sevenDay", "seven_day", "weekly", "week"}},
-		{"30d", []string{"30d", "monthly", "month", "rolling30d", "rolling_30d"}},
-	}
-	for _, period := range periods {
-		for _, name := range period.names {
-			if raw, ok := source[name]; ok {
-				item := mapValue(raw)
-				percent := usagePercent(raw)
-				if percent != nil {
-					row := map[string]any{"label": period.label, "percent": *percent}
-					if item != nil {
-						row["used"] = item["used"]
-						row["limit"] = item["limit"]
-						row["unit"] = item["unit"]
-						row["resetAt"] = item["resetAt"]
-					}
-					result = append(result, row)
-				}
-				break
-			}
-		}
-	}
-	return result
-}
-func usagePercent(value any) *float64 {
-	item := mapValue(value)
-	if item != nil {
-		direct := numberOrNil(item["percent"], item["percentage"], item["usedPercent"], item["usagePercent"], item["utilization"])
-		if direct != nil {
-			n := *direct
-			if n <= 1 {
-				n *= 100
-			}
-			n = math.Max(0, math.Min(100, n))
-			return &n
-		}
-		used, limit := firstNumber(item["used"], item["usedAmount"], item["consumed"], item["usage"], item["value"], item["current"]), firstNumber(item["limit"], item["max"], item["quota"], item["total"], item["capacity"])
-		if limit > 0 {
-			n := used / limit * 100
-			return &n
-		}
-	}
-	return nil
+	return time.Time{}, false
 }
 
 func (s *State) probeModel(model string) map[string]any {
@@ -2744,57 +2866,63 @@ func (s *State) routeAuthed(w http.ResponseWriter, r *http.Request) {
 			s.sendError(w, err)
 			return
 		}
-		if len(body.Accounts) == 0 || len(body.Accounts) > 200 {
+		if len(body.Accounts) > 200 {
 			s.sendJSON(w, 400, map[string]any{"error": map[string]any{"message": "账号数量必须在 1–200 之间"}})
 			return
 		}
 		cfg := s.configSnapshot()
-		accounts := []Account{}
-		for i, raw := range body.Accounts {
-			key := strings.TrimSpace(stringValue(raw["key"]))
-			id := stringValue(raw["id"])
-			if key == maskedAccountKey {
-				for _, old := range cfg.Accounts {
-					if accountID(old.Key) == id {
-						key = old.Key
-						break
+		if len(body.Accounts) > 0 {
+			accounts := []Account{}
+			for i, raw := range body.Accounts {
+				key := strings.TrimSpace(stringValue(raw["key"]))
+				id := stringValue(raw["id"])
+				if key == maskedAccountKey {
+					for _, old := range cfg.Accounts {
+						if accountID(old.Key) == id {
+							key = old.Key
+							break
+						}
+					}
+					if key == maskedAccountKey {
+						s.sendJSON(w, 409, map[string]any{"error": map[string]any{"message": "账号列表已变化，请刷新页面后再保存"}})
+						return
 					}
 				}
-				if key == maskedAccountKey {
-					s.sendJSON(w, 409, map[string]any{"error": map[string]any{"message": "账号列表已变化，请刷新页面后再保存"}})
+				if key == "" {
+					continue
+				}
+				if err := validateAccountKey(key); err != nil {
+					s.sendJSON(w, 400, map[string]any{"error": map[string]any{"message": "账号 key 无效"}})
 					return
 				}
+				enabled := true
+				if value, ok := raw["enabled"].(bool); ok {
+					enabled = value
+				}
+				name := stringValue(raw["name"])
+				if name == "" {
+					name = fmt.Sprintf("账号%d", i+1)
+				}
+				accounts = append(accounts, Account{Name: truncate(name, 50), Key: truncate(key, 1024), Enabled: enabled})
 			}
-			if key == "" {
-				continue
-			}
-			if err := validateAccountKey(key); err != nil {
-				s.sendJSON(w, 400, map[string]any{"error": map[string]any{"message": "账号 key 无效"}})
+			if len(accounts) == 0 {
+				s.sendJSON(w, 400, map[string]any{"error": map[string]any{"message": "至少需要一个有效账号（key 非空）"}})
 				return
 			}
-			enabled := true
-			if value, ok := raw["enabled"].(bool); ok {
-				enabled = value
+			cfg.Accounts, cfg.AccountMode, cfg.ActiveAccount = accounts, "single", body.Active
+			if body.Mode == "roundrobin" {
+				cfg.AccountMode = body.Mode
 			}
-			name := stringValue(raw["name"])
-			if name == "" {
-				name = fmt.Sprintf("账号%d", i+1)
+			if cfg.ActiveAccount < 0 {
+				cfg.ActiveAccount = 0
 			}
-			accounts = append(accounts, Account{Name: truncate(name, 50), Key: truncate(key, 1024), Enabled: enabled})
+			if cfg.ActiveAccount >= len(accounts) {
+				cfg.ActiveAccount = len(accounts) - 1
+			}
 		}
-		if len(accounts) == 0 {
-			s.sendJSON(w, 400, map[string]any{"error": map[string]any{"message": "至少需要一个有效账号（key 非空）"}})
+		if len(body.Accounts) == 0 && body.AccountConcurrency == nil && body.GlobalConcurrency == nil && body.GlobalRPM == nil && body.MaxRetries == nil && body.RateLimitSwitchRetries == nil && body.RetryIntervalMS == nil && body.TransportRetryStrategy == "" {
+			s.sendJSON(w, 400, map[string]any{"error": map[string]any{"message": "账号数量必须在 1–200 之间"}})
 			return
-		}
-		cfg.Accounts, cfg.AccountMode, cfg.ActiveAccount = accounts, "single", body.Active
-		if body.Mode == "roundrobin" {
-			cfg.AccountMode = body.Mode
-		}
-		if cfg.ActiveAccount < 0 {
-			cfg.ActiveAccount = 0
-		}
-		if cfg.ActiveAccount >= len(accounts) {
-			cfg.ActiveAccount = len(accounts) - 1
 		}
 		if body.AccountConcurrency != nil {
 			cfg.AccountConcurrency = clamp(*body.AccountConcurrency, 1, 32, 1)
@@ -2823,7 +2951,7 @@ func (s *State) routeAuthed(w http.ResponseWriter, r *http.Request) {
 		s.config = cfg
 		_ = atomicWriteJSON(s.configPath, s.config)
 		s.mu.Unlock()
-		s.sendJSON(w, 200, map[string]any{"ok": true, "accounts": len(accounts), "mode": cfg.AccountMode, "active": cfg.ActiveAccount, "accountConcurrency": cfg.AccountConcurrency, "globalConcurrency": cfg.GlobalConcurrency, "globalRpm": cfg.GlobalRPM})
+		s.sendJSON(w, 200, map[string]any{"ok": true, "accounts": len(cfg.Accounts), "mode": cfg.AccountMode, "active": cfg.ActiveAccount, "accountConcurrency": cfg.AccountConcurrency, "globalConcurrency": cfg.GlobalConcurrency, "globalRpm": cfg.GlobalRPM, "maxRetries": cfg.MaxRetries, "rateLimitSwitchRetries": cfg.RateLimitSwitchRetries, "retryIntervalMs": cfg.RetryIntervalMS, "transportRetryStrategy": cfg.TransportRetryStrategy})
 		return
 	}
 	if r.Method == http.MethodGet && path == "/api/security" {

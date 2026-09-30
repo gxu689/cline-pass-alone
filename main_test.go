@@ -257,7 +257,7 @@ func TestRoutingRetryAndValidate(t *testing.T) {
 	})
 	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"cline-pass/test"}`))
 	result, err := state.runChatChain(request, map[string]any{"model": "cline-pass/test", "messages": []any{}}, "cline-pass/test", ModelConfig{}, false, time.Minute)
-	if err != nil || result.Status != http.StatusOK || len(seen) != 2 || seen[0] == seen[1] {
+	if err != nil || result.Status != http.StatusOK || len(seen) != 2 || seen[0] == seen[1] || !state.blocked(Account{Key: "key-a"}, "", time.Now()) {
 		t.Fatalf("429 did not switch account once: status=%v err=%v seen=%v", result, err, seen)
 	}
 
@@ -282,32 +282,130 @@ func TestRoutingRetryAndValidate(t *testing.T) {
 	if recorder.Code != http.StatusOK || state.config.MaxRetries != 0 || state.config.RateLimitSwitchRetries != 0 {
 		t.Fatalf("explicit zero retries not kept: status=%d max=%d rate=%d body=%s", recorder.Code, state.config.MaxRetries, state.config.RateLimitSwitchRetries, recorder.Body.String())
 	}
+	kept := len(state.config.Accounts)
+	schedule := httptest.NewRequest(http.MethodPost, "/api/accounts", strings.NewReader(`{"globalConcurrency":2}`))
+	schedule.Header.Set("X-Admin-Key", "admin-test-key")
+	scheduleRecorder := httptest.NewRecorder()
+	state.router().ServeHTTP(scheduleRecorder, schedule)
+	if scheduleRecorder.Code != http.StatusOK || state.config.GlobalConcurrency != 2 || len(state.config.Accounts) != kept || state.config.Accounts[0].Key != "upstream-test-key" {
+		t.Fatalf("schedule save changed accounts: status=%d global=%d accounts=%d body=%s", scheduleRecorder.Code, state.config.GlobalConcurrency, len(state.config.Accounts), scheduleRecorder.Body.String())
+	}
 }
 
-func TestAccountUsageUsesOfficialBalance(t *testing.T) {
-	if got := normalizeUsage(map[string]any{"data": map[string]any{"balance": 250.0, "userId": "u"}}, "/balance"); got["remaining"] != 2.5 || got["unit"] != "credits" {
-		t.Fatalf("balance cents: %#v", got)
-	}
-	if activeOrganizationID(map[string]any{"organizations": []any{map[string]any{"active": false, "organizationId": "no"}, map[string]any{"active": true, "organizationId": "org-1"}}}) != "org-1" {
-		t.Fatal("active organization was not selected")
-	}
+func TestAccountUsageUsesPassWindows(t *testing.T) {
+	reset := time.Now().UTC().Add(2 * time.Hour).Format(time.RFC3339)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/users/me":
-			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "user-1", "organizations": []any{map[string]any{"active": true, "organizationId": "org-1"}}}})
-		case "/organizations/org-1/balance":
-			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"balance": 250.0}})
-		default:
+		if r.URL.Path != "/users/me/plan/usage-limits" {
 			http.NotFound(w, r)
+			return
 		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"limits": []any{
+			map[string]any{"type": "five_hour", "percentUsed": 2, "resetsAt": reset},
+			map[string]any{"type": "weekly", "percentUsed": 10, "resetsAt": reset},
+			map[string]any{"type": "monthly", "percentUsed": 5, "resetsAt": reset},
+		}}})
 	}))
 	defer upstream.Close()
 	state := testState(t, upstream.URL)
 	got := state.accountUsage(state.config.Accounts[0], true)
-	if got["ok"] != true || got["remaining"] != 2.5 || got["source"] != "/organizations/balance" || len(got["periods"].([]map[string]any)) != 0 {
-		t.Fatalf("org balance: %#v", got)
+	periods, _ := got["periods"].([]map[string]any)
+	if got["ok"] != true || got["source"] != "/users/me/plan/usage-limits" || len(periods) != 3 {
+		t.Fatalf("pass usage: %#v", got)
 	}
+	if periods[0]["label"] != "5小时" || periods[0]["percent"] != 2.0 || periods[1]["percent"] != 10.0 || periods[2]["percent"] != 5.0 || periods[0]["resetsAt"] == nil {
+		t.Fatalf("windows: %#v", periods)
+	}
+}
+
+func TestPassResetUsesExhaustedWindow(t *testing.T) {
+	now := time.Date(2026, 9, 30, 10, 0, 0, 0, time.UTC)
+	payload := map[string]any{"data": map[string]any{"limits": []any{
+		map[string]any{"type": "five_hour", "percentUsed": 100, "resetsAt": "2026-09-30T12:00:00Z"},
+		map[string]any{"type": "weekly", "percentUsed": 100, "resetsAt": "2026-10-06T00:00:00Z"},
+		map[string]any{"type": "monthly", "percentUsed": 5, "resetsAt": "2026-10-29T00:00:00Z"},
+	}}}
+	got := passResetTime(payload, now)
+	if !got.Equal(time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC)) {
+		t.Fatal(got)
+	}
+	if !passLimited("You have reached your ClinePass limit. Please try again later.") || passLimited("rate limit") {
+		t.Fatal("pass limit detection")
+	}
+}
+
+func TestCooldownSkipsPassAndChannel(t *testing.T) {
+	var calls []string
+	state := testState(t, "https://upstream.test")
+	state.config.AccountMode = "roundrobin"
+	state.config.MaxRetries = 1
+	state.config.RateLimitSwitchRetries = 1
+	state.config.Accounts = []Account{{Name: "a", Key: "key-a", Enabled: true}, {Name: "b", Key: "key-b", Enabled: true}}
+	reset := time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339)
+	state.client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls = append(calls, r.URL.Path+" "+r.Header.Get("Authorization"))
+		if strings.Contains(r.URL.Path, "usage-limits") {
+			body := `{"data":{"limits":[{"type":"five_hour","percentUsed":100,"resetsAt":"` + reset + `"}]}}`
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+		}
+		if strings.Contains(r.Header.Get("Authorization"), "key-a") {
+			return &http.Response{StatusCode: 429, Body: io.NopCloser(strings.NewReader(`{"error":{"message":"You have reached your ClinePass limit. Please try again later."}}`)), Header: make(http.Header)}, nil
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"choices":[{"message":{"content":"OK"}}]}`)), Header: make(http.Header)}, nil
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	result, err := state.runChatChain(req, map[string]any{"model": "cline-pass/test"}, "cline-pass/test", ModelConfig{}, false, time.Minute)
+	if err != nil || result.Status != 200 || result.Account.Name != "b" {
+		t.Fatalf("pass switch: err=%v status=%d account=%s calls=%v", err, result.Status, result.Account.Name, calls)
+	}
+	if !state.blocked(state.config.Accounts[0], "", time.Now()) {
+		t.Fatal("account a not cooled")
+	}
+	for i := 0; i < 4; i++ {
+		got, err := state.pickAccount("")
+		if err != nil || got.Name != "b" {
+			t.Fatalf("pick cooled: %v %#v", err, got)
+		}
+	}
+	before := len(calls)
+	state.markCool(true, accountID("key-b"), "", time.Now().Add(time.Hour))
+	blocked, err := state.runChatChain(req, map[string]any{"model": "cline-pass/test"}, "cline-pass/test", ModelConfig{}, false, time.Minute)
+	if err != nil || blocked.Status != 429 || len(calls) != before {
+		t.Fatalf("all cooled: err=%v status=%d calls=%d", err, blocked.Status, len(calls)-before)
+	}
+
+	state.config.Accounts = []Account{{Name: "a", Key: "key-a", Enabled: true}}
+	state.accountCool = nil
+	state.channelCool = nil
+	state.metadata.Models["cline-pass/test"] = map[string]any{"upstreams": []any{"alpha", "beta"}, "pipeline": "direct"}
+	state.config.MaxRetries = 0
+	state.config.RateLimitSwitchRetries = 0
+	state.client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls = append(calls, string(mustRead(r)))
+		if strings.Contains(calls[len(calls)-1], "alpha") {
+			header := make(http.Header)
+			header.Set("Retry-After", "30")
+			return &http.Response{StatusCode: 429, Body: io.NopCloser(strings.NewReader(`{"error":{"message":"rate limit"},"provider":"alpha"}`)), Header: header}, nil
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"choices":[{"message":{"content":"OK"}}]}`)), Header: make(http.Header)}, nil
+	})
+	before = len(calls)
+	result, err = state.runChatChain(req, map[string]any{"model": "cline-pass/test"}, "cline-pass/test", ModelConfig{Upstreams: []string{"alpha", "beta"}, PinMode: "strict"}, false, time.Minute)
+	if err != nil || result.Status != 200 || len(calls)-before != 2 {
+		t.Fatalf("channel switch: err=%v status=%d new=%d", err, result.Status, len(calls)-before)
+	}
+	if _, err := state.pickAccount("alpha"); err == nil {
+		t.Fatal("alpha still schedulable")
+	}
+	if state.blocked(state.config.Accounts[0], "beta", time.Now()) {
+		t.Fatal("beta should stay open")
+	}
+}
+
+func mustRead(r *http.Request) []byte {
+	data, _ := io.ReadAll(r.Body)
+	r.Body = io.NopCloser(bytes.NewReader(data))
+	return data
 }
 
 func urlValues(key, value string) url.Values {
