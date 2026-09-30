@@ -20,10 +20,11 @@ const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
 const META_PATH = path.join(DATA_DIR, 'metadata.json');
 const LOG_PATH = path.join(DATA_DIR, 'request-logs.jsonl');
 const PUBLIC_DIR = path.join(__dirname, 'public');
+fs.mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
 
 const DEFAULT_CONFIG = {
   port: 3123,
-  apiKey: '',
+  adminKey: '',
   proxyKey: '',
   publicBaseUrl: '',
   exposeCatalog: false,    // true 时 /v1/models 合并完整目录模型（默认仅订阅模型）
@@ -37,6 +38,7 @@ const DEFAULT_CONFIG = {
   maxRetries: 2,           // 一次代理请求最多增加的重试次数（不含渠道故障转移）
   rateLimitSwitchRetries: 1,
   retryIntervalMs: 0,
+  streamIdleTimeoutMs: 120000,
   transportRetryStrategy: 'switch', // switch=换号，sticky=同号
   knownModels: [
     'cline-pass/glm-5.3-flash',
@@ -65,9 +67,12 @@ const DEFAULT_CONFIG = {
 
 function loadJson(file, fallback) {
   try {
-    return JSON.parse(fs.readFileSync(file, 'utf8'));
-  } catch {
-    return fallback;
+    const value = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${file} must contain a JSON object`);
+    return value;
+  } catch (error) {
+    if (error.code === 'ENOENT') return fallback;
+    throw error;
   }
 }
 const config = { ...DEFAULT_CONFIG, ...loadJson(CONFIG_PATH, {}) };
@@ -77,14 +82,34 @@ config.perModel = Object.assign(Object.create(null), config.perModel || {});
 META.models = Object.assign(Object.create(null), META.models || {});
 META.stats = Object.assign(Object.create(null), META.stats || {});
 META.accountUsage = Object.assign(Object.create(null), META.accountUsage || {});
-const saveConfig = () => {
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 });
-  fs.chmodSync(CONFIG_PATH, 0o600);
-};
-const saveMeta = () => {
-  fs.writeFileSync(META_PATH, JSON.stringify(META, null, 2), { mode: 0o600 });
-  fs.chmodSync(META_PATH, 0o600);
-};
+function saveJson(file, value) {
+  const temp = `${file}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
+  try {
+    const fd = fs.openSync(temp, 'wx', 0o600);
+    try {
+      fs.writeFileSync(fd, JSON.stringify(value, null, 2));
+      fs.fsyncSync(fd);
+    } finally { fs.closeSync(fd); }
+    fs.renameSync(temp, file);
+    fs.chmodSync(file, 0o600);
+  } catch (error) {
+    try { fs.unlinkSync(temp); } catch {}
+    throw error;
+  }
+}
+const saveConfig = () => saveJson(CONFIG_PATH, config);
+const saveMeta = () => saveJson(META_PATH, META);
+
+function normalizeAccounts(value) {
+  if (!Array.isArray(value)) return [];
+  return value.filter((a) => a && typeof a === 'object' && typeof a.key === 'string' && a.key.trim())
+    .map((a, index) => ({ name: String(a.name || `账号${index + 1}`).slice(0, 50), key: a.key.trim().slice(0, 1024), enabled: a.enabled !== false }));
+}
+config.accounts = normalizeAccounts(config.accounts);
+config.knownModels = Array.isArray(config.knownModels)
+  ? [...new Set(config.knownModels.filter((id) => typeof id === 'string' && id.length <= 200 && /^[a-z0-9][a-z0-9._:/+@-]*$/i.test(id) && !['constructor', 'prototype', '__proto__'].includes(id)))]
+  : [...DEFAULT_CONFIG.knownModels];
+config.publicBaseUrl = typeof config.publicBaseUrl === 'string' ? config.publicBaseUrl.trim().replace(/\/+$/, '') : '';
 // 旧版本会把最近请求详情混入模型元数据；这些内容应只存在于两天日志中。
 let metadataCleaned = false;
 for (const model of Object.values(META.models)) {
@@ -97,11 +122,14 @@ if (metadataCleaned) saveMeta();
 const REQUEST_LOG = new RequestLogStore(LOG_PATH, Array.isArray(META.history) ? META.history : []);
 if (Array.isArray(META.history) && META.history.length) { META.history = []; saveMeta(); }
 setInterval(() => REQUEST_LOG.prune(), 60 * 1000).unref();
-// 旧版单 apiKey 迁移为账号池
-if ((!Array.isArray(config.accounts) || config.accounts.length === 0) && config.apiKey) {
-  config.accounts = [{ name: '默认账号', key: config.apiKey, enabled: true }];
-  config.accountMode = 'single';
-  config.activeAccount = 0;
+// 旧版单 apiKey 只迁移一次，不保留可绕过“禁用账号”的后备凭据。
+if (config.apiKey) {
+  if (!Array.isArray(config.accounts) || config.accounts.length === 0) {
+    config.accounts = [{ name: '默认账号', key: config.apiKey, enabled: true }];
+    config.accountMode = 'single';
+    config.activeAccount = 0;
+  }
+  delete config.apiKey;
   saveConfig();
 }
 config.accountMode = config.accountMode === 'roundrobin' ? 'roundrobin' : 'single';
@@ -114,6 +142,7 @@ config.globalRpm = intRange(config.globalRpm, 0, 60000, 0);
 config.maxRetries = intRange(config.maxRetries, 0, 10, 2);
 config.rateLimitSwitchRetries = intRange(config.rateLimitSwitchRetries, 0, 10, 1);
 config.retryIntervalMs = intRange(config.retryIntervalMs, 0, 30000, 0);
+config.streamIdleTimeoutMs = intRange(config.streamIdleTimeoutMs, 1000, 600000, 120000);
 config.transportRetryStrategy = config.transportRetryStrategy === 'sticky' ? 'sticky' : 'switch';
 
 // perModel 配置升级：旧版单 upstream 迁移为有序多上游列表（upstream 保留为回滚兼容镜像）
@@ -137,17 +166,28 @@ if (process.env.CLINE_PASS_KEY) {
   }
 }
 if (process.env.PROXY_KEY && process.env.PROXY_KEY.trim()) config.proxyKey = process.env.PROXY_KEY.trim();
+if (process.env.ADMIN_KEY && process.env.ADMIN_KEY.trim()) config.adminKey = process.env.ADMIN_KEY.trim();
 if (process.env.PUBLIC_BASE_URL) config.publicBaseUrl = process.env.PUBLIC_BASE_URL.trim();
 if (process.env.PORT) config.port = Number(process.env.PORT) || config.port;
 const BIND_HOST = process.env.BIND_HOST || '127.0.0.1';
-if (!config.proxyKey && !['127.0.0.1', '::1', 'localhost'].includes(BIND_HOST)) {
-  config.proxyKey = crypto.randomBytes(24).toString('base64url');
-  saveConfig();
-  console.warn(`[安全] 非本机绑定已自动生成代理密钥，请妥善保存：${config.proxyKey}`);
+config.adminKey = String(config.adminKey || '').trim();
+config.proxyKey = String(config.proxyKey || '').trim();
+let generatedAdminKey = false;
+let generatedProxyKey = false;
+if (!config.adminKey) {
+  config.adminKey = crypto.randomBytes(24).toString('base64url');
+  generatedAdminKey = true;
 }
+if (!config.proxyKey) {
+  config.proxyKey = crypto.randomBytes(24).toString('base64url');
+  generatedProxyKey = true;
+}
+if (config.adminKey === config.proxyKey) throw new Error('adminKey and proxyKey must be different');
+if (generatedAdminKey || generatedProxyKey) saveConfig();
+if (generatedAdminKey) console.warn(`[安全] 已生成控制台管理员密钥（仅此一次显示）：${config.adminKey}`);
 
 function isConfigured() {
-  return !!config.apiKey || enabledAccounts().length > 0;
+  return enabledAccounts().length > 0;
 }
 if (!isConfigured()) {
   console.warn('[提示] 尚未配置上游 API Key：打开控制台「账号管理」添加账号并保存即可；服务已启动。');
@@ -347,13 +387,22 @@ function resolveStoredAccount(bodyAccount, index) {
   const old = id
     ? (config.accounts || []).find((a) => accountId(a.key) === id)
     : config.accounts?.[index];
+  if (candidate === MASKED_ACCOUNT_KEY && !old) {
+    const error = new Error('账号列表已变化，请刷新页面后再保存');
+    error.status = 409;
+    throw error;
+  }
   // 页面回传脱敏占位符时保留服务端原密钥；只有用户输入新值才替换。
   const key = old?.key && candidate === maskAccountKey(old.key) ? old.key : candidate;
   return { ...bodyAccount, key, old };
 }
 function pickAccount() {
   const list = enabledAccounts();
-  if (!list.length) return { name: '默认', key: config.apiKey || '' };
+  if (!list.length) {
+    const error = new Error('没有已启用的上游账号');
+    error.status = 503;
+    throw error;
+  }
   if (config.accountMode === 'roundrobin' && list.length > 1) {
     const a = list[RR_COUNTER % list.length];
     RR_COUNTER = (RR_COUNTER + 1) % 1000000000;
@@ -375,18 +424,23 @@ const chatHeaders = (key) => ({
   Authorization: `Bearer ${key}`,
 });
 
-// 代理密钥：非空时，/v1/* 与 /api/* 均需鉴权（Authorization: Bearer <key> 或 X-Admin-Key: <key>）；
-// 控制台页面本身保持开放（不含任何敏感数据，数据由带鉴权的 /api/* 提供）。
-// 可通过 POST /api/security 在运行期修改（下游密钥 = 客户端访问代理的凭据）。
+// 管理端与客户端使用独立凭据；客户端 API Key 不能操作 /api/* 管理接口。
 let PROXY_KEY = config.proxyKey || '';
-function authOK(req) {
-  if (!PROXY_KEY) return true;
-  const bearer = String(req.headers['authorization'] || '').replace(/^Bearer\s+/i, '').trim();
-  const admin = String(req.headers['x-admin-key'] || '').trim();
-  return bearer === PROXY_KEY || admin === PROXY_KEY;
+let ADMIN_KEY = config.adminKey || '';
+function tokenMatches(actual, expected) {
+  const a = Buffer.from(actual);
+  const b = Buffer.from(expected);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+function clientAuthOK(req) {
+  const bearer = /^Bearer\s+(.+)$/i.exec(String(req.headers.authorization || ''));
+  return tokenMatches(bearer?.[1]?.trim() || '', PROXY_KEY);
+}
+function adminAuthOK(req) {
+  return tokenMatches(String(req.headers['x-admin-key'] || '').trim(), ADMIN_KEY);
 }
 function unauthorized(res) {
-  return sendJSON(res, 401, { error: { message: 'unauthorized: 代理密钥缺失或错误', type: 'auth_error' } });
+  return sendJSON(res, 401, { error: { message: 'unauthorized: 密钥缺失或错误', type: 'auth_error' } });
 }
 function publicProxyBase() {
   return config.publicBaseUrl
@@ -729,7 +783,7 @@ function injectPrefs(body, modelId, { upstream, orderRest = [], excludeList = []
   const b = JSON.parse(JSON.stringify(body));
   const exclude = (excludeList || []).filter((u) => u !== upstream);
   const meta = META.models[modelId] || {};
-  const known = meta.upstreams || [];
+  const known = Array.isArray(meta.upstreams) ? meta.upstreams : [];
   const allowList = exclude.length ? known.filter((u) => !exclude.includes(u)) : null;
   if (!upstream && !sort && !(allowList && allowList.length)) return b;
   const pipeline = meta.pipeline || null;
@@ -828,6 +882,13 @@ async function runChatChain(req, body, modelId, cfg, { stream = false, attemptTi
   const attempts = buildAttempts(modelId, cfg);
   const trace = [];
   const t0 = Date.now();
+  const known = Array.isArray(META.models[modelId]?.upstreams) ? META.models[modelId].upstreams : [];
+  for (const attempt of attempts) {
+    const excluded = attempt.excludeList || [];
+    if (excluded.length && (!attempt.upstream || !attempt.strict) && !known.some((u) => !excluded.includes(u))) {
+      return { status: 409, out: { error: { message: '无法安全执行渠道排除：请先探测模型并保留至少一个可用渠道', type: 'routing_error' } }, routing: {}, acc: null, trace, t0 };
+    }
+  }
   let last = null;
   let activeCtrl = null;
   let keepCloseHook = false;
@@ -960,24 +1021,59 @@ async function handleChat(req, res) {
       'X-Cline-Attempts': String(chain.trace.length),
       'X-Cline-Account': headerSafe(acc.name),
     });
-    if (chain.streamHead) res.write(chain.streamHead);
     let tail = chain.streamHead || Buffer.alloc(0);
     let released = false;
     let logged = false;
-    const releaseSlot = () => { if (!released) { released = true; chain.slotRelease?.(); chain.streamCleanup?.(); } };
+    let timedOut = false;
+    let streamError = '';
+    let idleTimer;
+    const decoder = new TextDecoder();
+    let pendingLine = '';
+    const inspectLine = (line) => {
+      if (!line.startsWith('data:')) return;
+      try {
+        const event = JSON.parse(line.slice(5).trim());
+        if (event?.error) streamError = errText(event.error).slice(0, 300);
+      } catch {}
+    };
+    const inspectChunk = (chunk) => {
+      pendingLine += decoder.decode(chunk, { stream: true });
+      let newline;
+      while ((newline = pendingLine.indexOf('\n')) !== -1) {
+        inspectLine(pendingLine.slice(0, newline).trimEnd());
+        pendingLine = pendingLine.slice(newline + 1);
+      }
+      if (pendingLine.length > 65536) pendingLine = pendingLine.slice(-65536);
+    };
+    const resetIdle = () => {
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        timedOut = true;
+        chain.streamAbort?.();
+      }, config.streamIdleTimeoutMs);
+      idleTimer.unref?.();
+    };
+    const releaseSlot = () => { if (!released) { released = true; clearTimeout(idleTimer); chain.slotRelease?.(); chain.streamCleanup?.(); } };
     const recordStream = (status, extra = {}) => {
       if (logged) return;
       logged = true;
+      if (status !== 200 && chain.trace.length) chain.trace[chain.trace.length - 1].status = status;
       record(modelId, { status, provider: null, canonical: null, ms: Date.now() - t0, stream: true, error: status === 499 ? 'client disconnected' : status === 200 ? null : 'stream interrupted', account: acc.name, accountId: accountId(acc.key), trace: chain.trace, ...logContext(req), ...extra });
     };
+    if (chain.streamHead) { inspectChunk(chain.streamHead); res.write(chain.streamHead); }
+    resetIdle();
     const tap = new Transform({
       transform(c, enc, cb) {
+        inspectChunk(c);
+        resetIdle();
         // 只保留末尾 64 KiB 用于解析路由元数据，避免长流式回复占满内存。
         tail = Buffer.concat([tail, c]);
         if (tail.length > 65536) tail = tail.subarray(tail.length - 65536);
         cb(null, c);
       },
       flush(cb) {
+        pendingLine += decoder.decode();
+        inspectLine(pendingLine.trimEnd());
         const text = tail.toString('utf8');
         let provider = null, canonical = null, usage = null;
         // direct 管道：最后一个 chunk 顶层带 provider（显示名）与 model
@@ -998,14 +1094,14 @@ async function handleChat(req, res) {
           provider = fp ? fp[1] : null;
           canonical = cs ? cs[1] : null;
         }
-        recordStream(200, { provider, canonical, usage });
+        recordStream(streamError ? 502 : 200, { provider, canonical, usage, ...(streamError ? { error: streamError } : {}) });
         releaseSlot();
         cb();
       },
     });
-    res.on('close', () => { if (!logged) recordStream(499); chain.streamAbort?.(); releaseSlot(); });
+    res.on('close', () => { if (!logged) recordStream(timedOut ? 504 : 499, timedOut ? { error: 'stream idle timeout' } : {}); chain.streamAbort?.(); releaseSlot(); });
     pipeline(Readable.fromWeb(up.body), tap, res).catch((e) => {
-      if (!logged) recordStream(res.destroyed ? 499 : 502, { error: e.message });
+      if (!logged) recordStream(timedOut ? 504 : res.destroyed ? 499 : 502, { error: timedOut ? 'stream idle timeout' : e.message });
       releaseSlot();
       if (!res.destroyed) res.destroy(e);
     });
@@ -1051,7 +1147,7 @@ async function handleChat(req, res) {
 
 // ---------- HTTP 服务 ----------
 function sendJSON(res, status, obj) {
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' });
   res.end(JSON.stringify(obj));
 }
 
@@ -1070,16 +1166,6 @@ async function catalog() {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   const p = url.pathname;
-  if (!PROXY_KEY && ['127.0.0.1', '::1', 'localhost'].includes(BIND_HOST)) {
-    let host = '';
-    try { host = new URL(`http://${req.headers.host || ''}`).hostname.replace(/^\[/, '').replace(/\]$/, ''); } catch {}
-    if (!['127.0.0.1', '::1', 'localhost'].includes(host)) return sendJSON(res, 403, { error: { message: '无鉴权模式仅允许本机主机名' } });
-  }
-  if (!PROXY_KEY && req.headers.origin && (p.startsWith('/api/') || p.startsWith('/v1/') || CHAT_PATHS.has(p))) {
-    try {
-      if (new URL(req.headers.origin).host !== req.headers.host) return sendJSON(res, 403, { error: { message: '无鉴权模式仅允许同源浏览器请求' } });
-    } catch { return sendJSON(res, 403, { error: { message: 'invalid origin' } }); }
-  }
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
@@ -1090,11 +1176,11 @@ const server = http.createServer(async (req, res) => {
   }
   try {
     if (req.method === 'GET' && p === '/api/meta') {
-      return sendJSON(res, 200, { authRequired: !!PROXY_KEY, proxyBase: publicProxyBase(), configured: isConfigured() });
+      return sendJSON(res, 200, { authRequired: true, proxyBase: publicProxyBase(), configured: isConfigured() });
     }
-    if (p.startsWith('/api/') || p.startsWith('/v1/') || CHAT_PATHS.has(p)) {
-      if (!authOK(req)) return unauthorized(res);
-    }
+    const clientRoute = CHAT_PATHS.has(p) || p.startsWith('/v1/') || p === '/models' || p === '/api/v1/models';
+    if (clientRoute && !clientAuthOK(req)) return unauthorized(res);
+    if (!clientRoute && p.startsWith('/api/') && !adminAuthOK(req)) return unauthorized(res);
     if (req.method === 'GET' && (p === '/' || p === '/index.html')) {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       return res.end(fs.readFileSync(path.join(PUBLIC_DIR, 'index.html')));
@@ -1247,21 +1333,26 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, 200, { ok: true, results });
     }
     if (req.method === 'GET' && p === '/api/security') {
-      return sendJSON(res, 200, { proxyKey: config.proxyKey || '', publicBaseUrl: config.publicBaseUrl || '', authRequired: !!PROXY_KEY, exposeCatalog: !!config.exposeCatalog });
+      return sendJSON(res, 200, { adminKey: config.adminKey, proxyKey: config.proxyKey, publicBaseUrl: config.publicBaseUrl || '', authRequired: true, exposeCatalog: !!config.exposeCatalog });
     }
     if (req.method === 'POST' && p === '/api/security') {
       const body = JSON.parse(await readBody(req).then((b) => b.toString()));
-      if (body.proxyKey !== undefined) {
-        const nextKey = String(body.proxyKey).trim();
-        if (!nextKey && !['127.0.0.1', '::1', 'localhost'].includes(BIND_HOST))
-          return sendJSON(res, 400, { error: { message: '对外监听时必须保留代理密钥' } });
-        config.proxyKey = nextKey;
-      }
-      if (body.publicBaseUrl !== undefined) config.publicBaseUrl = String(body.publicBaseUrl).trim().replace(/\/+$/, '');
-      if (body.exposeCatalog !== undefined) config.exposeCatalog = !!body.exposeCatalog;
-      saveConfig();
+      const nextAdmin = body.adminKey === undefined ? config.adminKey : typeof body.adminKey === 'string' ? body.adminKey.trim() : '';
+      const nextProxy = body.proxyKey === undefined ? config.proxyKey : typeof body.proxyKey === 'string' ? body.proxyKey.trim() : '';
+      if (!nextAdmin || !nextProxy) return sendJSON(res, 400, { error: { message: '控制台密钥和客户端 API Key 均不能为空' } });
+      if (nextAdmin === nextProxy) return sendJSON(res, 400, { error: { message: '控制台密钥与客户端 API Key 必须不同' } });
+      const updated = {
+        ...config,
+        adminKey: nextAdmin,
+        proxyKey: nextProxy,
+        publicBaseUrl: body.publicBaseUrl === undefined ? config.publicBaseUrl : String(body.publicBaseUrl).trim().replace(/\/+$/, ''),
+        exposeCatalog: body.exposeCatalog === undefined ? config.exposeCatalog : !!body.exposeCatalog,
+      };
+      saveJson(CONFIG_PATH, updated);
+      Object.assign(config, updated);
       PROXY_KEY = config.proxyKey || '';
-      return sendJSON(res, 200, { ok: true, proxyKey: config.proxyKey, publicBaseUrl: config.publicBaseUrl, authRequired: !!PROXY_KEY, proxyBase: publicProxyBase(), exposeCatalog: !!config.exposeCatalog });
+      ADMIN_KEY = config.adminKey || '';
+      return sendJSON(res, 200, { ok: true, adminKey: config.adminKey, proxyKey: config.proxyKey, publicBaseUrl: config.publicBaseUrl, authRequired: true, proxyBase: publicProxyBase(), exposeCatalog: !!config.exposeCatalog });
     }
     if (req.method === 'POST' && p === '/api/validate-upstreams') {
       const { model } = JSON.parse(await readBody(req).then((b) => b.toString()));
@@ -1323,10 +1414,11 @@ const server = http.createServer(async (req, res) => {
         : [...new Set([...config.knownModels, ...Object.keys(config.perModel)])];
       return sendJSON(res, 200, { object: 'list', data: ids.map((id) => ({ id, object: 'model' })) });
     }
-    if (CHAT_PATHS.has(p) && req.method === 'POST') return handleChat(req, res);
+    if (CHAT_PATHS.has(p) && req.method === 'POST') return await handleChat(req, res);
     return sendJSON(res, 404, { error: { message: `no route: ${req.method} ${p}` } });
   } catch (e) {
-    return sendJSON(res, 500, { error: { message: e.message } });
+    if (res.headersSent || res.destroyed) { res.destroy(e); return; }
+    return sendJSON(res, e.status || 500, { error: { message: e.message } });
   }
 });
 

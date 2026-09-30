@@ -152,8 +152,8 @@
   <div id="loginOverlay" style="display:none; position:fixed; inset:0; background:rgba(8,10,14,.85); z-index:50; align-items:center; justify-content:center;">
     <div style="background:var(--card); border:1px solid var(--border); border-radius:12px; padding:28px; width:360px;">
       <h2 style="font-size:16px; margin-bottom:6px;">Cline Pass 上游控制台</h2>
-      <p class="dim" style="font-size:13px; margin-bottom:14px;">此部署已启用代理密钥保护，请输入密钥访问控制台。</p>
-      <input id="loginKey" type="password" placeholder="代理密钥" style="width:100%; background:var(--card2); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:9px 10px; font-size:14px;">
+      <p class="dim" style="font-size:13px; margin-bottom:14px;">请输入控制台专用密钥。客户端 API Key 不能登录管理页面。</p>
+      <input id="loginKey" type="password" placeholder="控制台密钥" style="width:100%; background:var(--card2); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:9px 10px; font-size:14px;">
       <div id="loginErr" style="color:var(--red); font-size:12px; margin-top:6px;"></div>
       <button style="width:100%; margin-top:12px;" onclick="tryLogin()">进入控制台</button>
     </div>
@@ -265,12 +265,17 @@
   </div>
 
   <div class="card" data-page="security">
-    <h2>访问与安全（下游密钥）</h2>
+    <h2>访问与安全</h2>
     <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-      <label class="dim" style="font-size:13px">代理密钥：</label>
-      <input id="secProxyKey" type="password" placeholder="空 = 关闭鉴权" style="width:340px; background:var(--card2); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:7px 10px; font-family:Consolas, monospace; font-size:13px">
-      <label class="dim" style="font-size:12px"><input type="checkbox" id="secShow" onchange="$('#secProxyKey').type=this.checked?'text':'password'"> 显示</label>
+      <label class="dim" style="font-size:13px">控制台登录密钥：</label>
+      <input id="secAdminKey" type="password" placeholder="管理页面专用" style="width:340px; background:var(--card2); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:7px 10px; font-family:Consolas, monospace; font-size:13px">
+      <label class="dim" style="font-size:12px"><input type="checkbox" id="secAdminShow" onchange="$('#secAdminKey').type=this.checked?'text':'password'"> 显示</label>
       <span id="secBadge" class="badge"></span>
+    </div>
+    <div style="display:flex; gap:10px; align-items:center; margin-top:8px; flex-wrap:wrap;">
+      <label class="dim" style="font-size:13px">客户端 API Key：</label>
+      <input id="secProxyKey" type="password" placeholder="OpenAI 客户端专用" style="width:340px; background:var(--card2); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:7px 10px; font-family:Consolas, monospace; font-size:13px">
+      <label class="dim" style="font-size:12px"><input type="checkbox" id="secShow" onchange="$('#secProxyKey').type=this.checked?'text':'password'"> 显示</label>
     </div>
     <div style="display:flex; gap:10px; align-items:center; margin-top:8px; flex-wrap:wrap;">
       <label class="dim" style="font-size:13px">公网代理地址：</label>
@@ -278,7 +283,7 @@
     </div>
     <div style="display:flex; gap:10px; align-items:center; margin-top:12px; flex-wrap:wrap;">
       <button onclick="saveSecurity()">保存访问设置</button>
-      <span class="dim" style="font-size:12px">修改密钥后，客户端需改用新密钥；控制台会自动更新本机保存的密钥，不会被锁在外面。</span>
+      <span class="dim" style="font-size:12px">两把密钥必须不同且不能为空；修改客户端 API Key 后需更新客户端，修改控制台密钥后当前浏览器会自动更新。</span>
       <span class="dim" style="font-size:12px" id="secMsg"></span>
     </div>
   </div>
@@ -343,7 +348,8 @@
 
 <script>
 let DATA = null;
-let AUTH_KEY = localStorage.getItem('cps_key') || '';
+localStorage.removeItem('cps_key'); // 旧版本在此保存的是客户端密钥，不再允许用来管理控制台。
+let AUTH_KEY = localStorage.getItem('cps_admin_key') || '';
 const $ = (s) => document.querySelector(s);
 const fmt = (ts) => new Date(ts).toLocaleTimeString();
 const escapeHtml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -387,7 +393,7 @@ async function tryLogin() {
   try {
     const res = await fetch('/api/security', { headers: { 'X-Admin-Key': k } });
     if (!res.ok) { $('#loginErr').textContent = '密钥错误，请重试'; return; }
-    AUTH_KEY = k; localStorage.setItem('cps_key', k);
+    AUTH_KEY = k; localStorage.setItem('cps_admin_key', k);
     $('#loginOverlay').style.display = 'none'; $('#loginErr').textContent = '';
     loadAll().catch(() => showNotice('控制台数据加载失败，请刷新重试'));
   } catch { $('#loginErr').textContent = '无法连接服务，请稍后重试'; }
@@ -554,11 +560,12 @@ async function loadAll() {
 }
 
 function renderSecurity(sec) {
+  $('#secAdminKey').value = sec.adminKey || '';
   $('#secProxyKey').value = sec.proxyKey || '';
   $('#secPublicBase').value = sec.publicBaseUrl || '';
   const badge = $('#secBadge');
-  badge.textContent = sec.authRequired ? '鉴权已开启' : '鉴权已关闭';
-  badge.className = sec.authRequired ? 'badge green' : 'badge orange';
+  badge.textContent = '双密钥保护已开启';
+  badge.className = 'badge green';
   const ec = $('#exposeCatalog');
   if (ec) ec.checked = !!sec.exposeCatalog;
 }
@@ -571,17 +578,18 @@ async function saveExposeCatalog(v) {
 
 async function saveSecurity() {
   const payload = {
+    adminKey: $('#secAdminKey').value.trim(),
     proxyKey: $('#secProxyKey').value.trim(),
     publicBaseUrl: $('#secPublicBase').value.trim(),
   };
   const r = await api('/api/security', payload);
   if (r.ok) {
-    // 控制台鉴权与代理密钥同源：改完立即换新密钥，避免会话失效
-    if (r.proxyKey) { AUTH_KEY = r.proxyKey; localStorage.setItem('cps_key', r.proxyKey); }
+    // 管理密钥轮换后立即更新当前浏览器，避免会话失效。
+    AUTH_KEY = r.adminKey; localStorage.setItem('cps_admin_key', r.adminKey);
     renderSecurity(r);
     if (DATA) DATA.proxyBase = r.proxyBase;
     $('#proxyBase').textContent = '代理地址：' + r.proxyBase + '（点击复制）';
-    secMsg('已保存' + (r.authRequired ? '，鉴权开启' : '，鉴权已关闭（任何客户端都可访问代理）'));
+    secMsg('已保存；控制台与客户端使用不同密钥');
   } else secMsg(r.error?.message || '保存失败', true);
 }
 

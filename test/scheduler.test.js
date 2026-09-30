@@ -19,7 +19,7 @@ async function freePort() {
 test('未配置上游账号时控制台仍可登录并展示页面', { timeout: 10000 }, async () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cline-console-'));
   const port = await freePort();
-  fs.writeFileSync(path.join(dataDir, 'config.json'), JSON.stringify({ port, proxyKey: 'console-test-key', accounts: [] }));
+  fs.writeFileSync(path.join(dataDir, 'config.json'), JSON.stringify({ port, adminKey: 'console-admin-key', proxyKey: 'client-test-key', accounts: [] }));
   const metadataPath = path.join(dataDir, 'metadata.json');
   fs.writeFileSync(metadataPath, JSON.stringify({ models: { 'cline-pass/test': { lastProvider: 'known', account: 'old-name', trace: [{ status: 200 }] } }, history: [] }));
   const child = spawn(process.execPath, ['server.js'], { cwd: path.resolve('.'), env: { ...process.env, DATA_DIR: dataDir, BIND_HOST: '127.0.0.1' }, stdio: 'ignore' });
@@ -34,11 +34,23 @@ test('未配置上游账号时控制台仍可登录并展示页面', { timeout: 
     }
     assert.ok(ready, 'proxy did not start');
     assert.equal((await fetch(`${base}/api/models`)).status, 401);
-    const headers = { 'X-Admin-Key': 'console-test-key' };
+    const headers = { 'X-Admin-Key': 'console-admin-key' };
     const modelsResponse = await fetch(`${base}/api/models`, { headers });
     assert.equal(modelsResponse.status, 200);
     assert.ok(Array.isArray((await modelsResponse.json()).subscription));
     assert.equal((await fetch(`${base}/api/security`, { headers })).status, 200);
+    assert.equal((await fetch(`${base}/api/security`, { headers: { Authorization: 'Bearer client-test-key' } })).status, 401);
+    assert.equal((await fetch(`${base}/api/security`, { method: 'POST', headers: { Authorization: 'Bearer client-test-key', 'Content-Type': 'application/json' }, body: JSON.stringify({ adminKey: 'hijacked' }) })).status, 401);
+    assert.equal((await fetch(`${base}/api/security`, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ adminKey: 'client-test-key' }) })).status, 400);
+    assert.equal((await fetch(`${base}/v1/models`, { headers })).status, 401);
+    assert.equal((await fetch(`${base}/v1/models`, { headers: { Authorization: 'Bearer client-test-key' } })).status, 200);
+    assert.equal((await fetch(`${base}/v1/chat/completions`, { method: 'POST', headers: { Authorization: 'Bearer client-test-key', 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'cline-pass/test', messages: [] }) })).status, 503);
+    const rotated = await fetch(`${base}/api/security`, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ adminKey: 'new-console-admin-key', proxyKey: 'new-client-api-key' }) });
+    assert.equal(rotated.status, 200);
+    assert.equal((await fetch(`${base}/api/security`, { headers })).status, 401);
+    assert.equal((await fetch(`${base}/api/security`, { headers: { 'X-Admin-Key': 'new-console-admin-key' } })).status, 200);
+    assert.equal((await fetch(`${base}/v1/models`, { headers: { Authorization: 'Bearer client-test-key' } })).status, 401);
+    assert.equal((await fetch(`${base}/v1/models`, { headers: { Authorization: 'Bearer new-client-api-key' } })).status, 200);
     const migratedModel = JSON.parse(fs.readFileSync(metadataPath, 'utf8')).models['cline-pass/test'];
     assert.equal(migratedModel.lastProvider, 'known');
     assert.equal(migratedModel.account, undefined);
@@ -46,6 +58,7 @@ test('未配置上游账号时控制台仍可登录并展示页面', { timeout: 
     const page = await (await fetch(base)).text();
     assert.match(page, /运行概览/);
     assert.match(page, /id="overviewAccounts"/);
+    assert.match(page, /id="secAdminKey"/);
   } finally {
     child.kill();
     fs.rmSync(dataDir, { recursive: true, force: true });
@@ -122,6 +135,11 @@ test('账户周期用量与全局调度、换号及流式重试', { timeout: 200
       }
       return;
     }
+    if (behavior === 'hang-stream') {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.write('data: {"choices":[{"delta":{"content":"hi"}}]}\n\n');
+      return;
+    }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ choices: [{ message: { content: 'ok' } }], usage: { prompt_tokens: 2, completion_tokens: 3, total_tokens: 5, cost: 0.001 } }));
   });
@@ -130,12 +148,20 @@ test('账户周期用量与全局调度、换号及流式重试', { timeout: 200
   const upstreamPort = upstream.address().port;
   fs.writeFileSync(path.join(dataDir, 'config.json'), JSON.stringify({
     port: proxyPort, upstreamBase: `http://127.0.0.1:${upstreamPort}`,
+    adminKey: 'test-admin-key', proxyKey: 'test-client-key',
     accounts: [{ name: 'A', key: 'a' }, { name: 'B', key: 'b' }],
     accountMode: 'roundrobin', accountConcurrency: 1, globalConcurrency: 2,
-    globalRpm: 0, maxRetries: 0, knownModels: ['cline-pass/test'],
+    globalRpm: 0, maxRetries: 0, streamIdleTimeoutMs: 1000, knownModels: ['cline-pass/test'],
   }));
   const child = spawn(process.execPath, ['server.js'], { cwd: path.resolve('.'), env: { ...process.env, DATA_DIR: dataDir, BIND_HOST: '127.0.0.1' }, stdio: 'ignore' });
   const base = `http://127.0.0.1:${proxyPort}`;
+  const fetch = (url, options = {}) => {
+    const pathname = new URL(url).pathname;
+    const auth = pathname.startsWith('/api/') && !pathname.startsWith('/api/v1/')
+      ? { 'X-Admin-Key': 'test-admin-key' }
+      : { Authorization: 'Bearer test-client-key' };
+    return globalThis.fetch(url, { ...options, headers: { ...options.headers, ...auth } });
+  };
   const settings = async (extra = {}) => {
     const res = await fetch(`${base}/api/accounts`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
       accounts: [{ name: 'A', key: '••••••••' }, { name: 'B', key: '••••••••' }],
@@ -226,6 +252,16 @@ test('账户周期用量与全局调度、换号及流式重试', { timeout: 200
     assert.equal(lateError.status, 200);
     assert.match(await lateError.text(), /"message":"late"/);
     assert.equal(events.length, 1, 'SSE errors after the first event must not trigger retry');
+    const lateErrorLog = await (await fetch(`${base}/api/history?pageSize=1`)).json();
+    assert.equal(lateErrorLog.history[0].status, 502, 'late SSE error must not be logged as success');
+
+    await settings(); behavior = 'hang-stream';
+    const hung = await chat(true);
+    assert.equal(hung.status, 200);
+    await assert.rejects(hung.text());
+    const timeoutLog = await (await fetch(`${base}/api/history?pageSize=1`)).json();
+    assert.equal(timeoutLog.history[0].status, 504, 'idle stream must release its slot and be logged as timeout');
+    assert.equal((await (await fetch(`${base}/api/accounts`)).json()).scheduling.active, 0);
 
     await settings({ maxRetries: 0 }); behavior = 'fallback'; routeEvents.length = 0;
     const fallback = await fetch(`${base}/api/test`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'cline-pass/test', upstreams: ['alpha', 'beta'] }) });
@@ -233,6 +269,14 @@ test('账户周期用量与全局调度、换号及流式重试', { timeout: 200
     assert.equal(fallbackBody.ok, true);
     assert.deepEqual(routeEvents, ['alpha', 'beta']);
     assert.deepEqual(fallbackBody.trace.map((t) => t.status), [502, 200]);
+
+    const excludeConfig = (exclude) => fetch(`${base}/api/config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ perModel: { 'cline-pass/test': { upstreams: [], exclude } } }) });
+    assert.equal((await excludeConfig(['alpha'])).status, 200);
+    const beforeExcluded = routeEvents.length;
+    const excluded = await chat();
+    assert.equal(excluded.status, 409, 'unknown allowlist must fail closed');
+    assert.equal(routeEvents.length, beforeExcluded, 'excluded request must not reach upstream');
+    assert.equal((await excludeConfig([])).status, 200);
 
     await settings({ globalRpm: 2, maxRetries: 0 }); behavior = 'delay'; events.length = 0;
     await Promise.all([chat(), chat()]);

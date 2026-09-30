@@ -46,6 +46,7 @@ await new Promise((resolve) => portProbe.close(resolve));
 
 fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({
   port, upstreamBase: `http://127.0.0.1:${upstream.address().port}`,
+  adminKey: 'demo-admin-key', proxyKey: 'demo-client-api-key',
   accounts, accountMode: 'roundrobin', accountConcurrency: 2,
   globalConcurrency: 3, globalRpm: 0, knownModels: models,
 }, null, 2), { mode: 0o600 });
@@ -91,4 +92,5 @@ process.once('SIGINT', () => { cleanup(); process.exit(0); });
 process.once('SIGTERM', () => { cleanup(); process.exit(0); });
 app.once('exit', (code) => { cleanup(); process.exit(code || 0); });
 console.log(`\n示例控制台：http://127.0.0.1:${port}/#overview`);
+console.log('示例控制台密钥：demo-admin-key；示例客户端 API Key：demo-client-api-key');
 console.log('全部数据保存在临时目录，按 Ctrl+C 停止后自动删除。\n');

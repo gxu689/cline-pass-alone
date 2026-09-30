@@ -17,7 +17,7 @@
 - 💳 **额度查看** —— 参考 codex2api 的进度条布局，展示 Cline 接口实际返回的额度窗口；余额接口有总量时展示总额度比例，无权读取时显示原因。`spark` 是 codex2api 的 Codex 专属额度，不会虚构为 Cline Pass 额度
 - 📈 **使用统计与请求日志** —— 今日请求、Token、上游自报费用、RPM/TPM、错误率、模型分布和请求构成；日志按时间、状态、模型、账号、端点、流式方式与关键词筛选，服务端分页，自动只保留近 2 天
 - 📊 **观测** —— 每条请求自动记录实际命中的渠道、背后模型、耗时（含流式）
-- 🔑 **代理密钥** —— 给下游客户端发一把独立密钥，可随时在页面轮换
+- 🔑 **双密钥隔离** —— 控制台登录使用 `adminKey`，下游客户端使用 `proxyKey`；客户端 API Key 不能管理账号与安全设置
 - 🌐 **OpenAI 兼容** —— 任何 OpenAI 客户端 / Cline 扩展把 Base URL 指向代理即可，无侵入
 
 控制台以运行中的 `public/index.html` 为准；旧版截图保留在 `docs/` 仅供版本对比。
@@ -33,7 +33,7 @@ cd cline-pass-switcher
 node server.js        # 仅需 Node ≥ 18，无需 npm install
 ```
 
-打开 <http://127.0.0.1:3123/>，在「账号管理」里添加你的 Cline Pass 账号（`sk_` 开头的 key）并保存即可。
+启动日志会显示首次生成的控制台管理员密钥。打开 <http://127.0.0.1:3123/>，用该密钥登录，然后在「账号管理」里添加你的 Cline Pass 账号（`sk_` 开头的 key）并保存。
 没有 key 也能启动：页面会提示配置入口。
 
 想先查看带数据的控制台，可运行 `npm run demo`。命令会在本机启动使用虚构账号、额度和日志的演示服务，并打印访问地址；按 `Ctrl+C` 停止后会删除临时演示数据。
@@ -45,7 +45,7 @@ node server.js        # 仅需 Node ≥ 18，无需 npm install
 
 ```
 Base URL: http://127.0.0.1:3123/v1
-API Key:  （在控制台「访问与安全」里设置代理密钥；本地留空 = 不鉴权）
+API Key:  （使用控制台「访问与安全」中的客户端 API Key，即 proxyKey）
 Model:    cline-pass/glm-5.2 等
 ```
 
@@ -66,7 +66,7 @@ CPASS_DOMAIN=pass.example.com docker compose -f deploy/docker-compose.all-in-one
 docker compose -f deploy/docker-compose.all-in-one.yml up -d --build
 ```
 
-访问 `https://你的域名/`（或 `https://服务器IP/`），控制台里设置代理密钥即可对外提供服务。
+访问 `https://你的域名/`（或 `https://服务器IP/`），用启动日志中的控制台密钥登录。客户端使用页面上的独立 API Key。
 
 ### 方式 B：已有一个性化反代（nginx 门户等）
 
@@ -89,10 +89,13 @@ location / {
 |---|---|
 | `CLINE_PASS_KEY` | 上游 Cline Pass API Key（无 config 时自动创建账号） |
 | `PROXY_KEY` | 下游代理密钥（客户端访问代理的凭据） |
+| `ADMIN_KEY` | 控制台管理员密钥（仅用于 `/api/*` 管理接口） |
 | `PUBLIC_BASE_URL` | 门户展示的公网代理地址，如 `https://pass.example.com` |
 | `PORT` / `BIND_HOST` / `DATA_DIR` | 端口 / 绑定地址（容器内为 0.0.0.0）/ 配置目录 |
 
-环境变量在启动时覆盖 `config.json`；此后通过控制台保存设置，会以当前生效值写回文件。服务绑定非本机地址且未设置 `proxyKey` 时，会自动生成代理密钥并写入 `config.json`，首次启动时也会在日志中显示；请用该密钥登录控制台。
+环境变量在启动时覆盖 `config.json`；此后通过控制台保存设置，会以当前生效值写回文件。未配置的 `adminKey`、`proxyKey` 会自动生成并写入 `config.json`，仅新生成的管理员密钥会在启动日志显示一次。两把密钥不能相同，管理接口必须用 `X-Admin-Key: <adminKey>`，客户端接口必须用 `Authorization: Bearer <proxyKey>`。
+
+从旧版升级时先停止服务并备份 `config.json`、`metadata.json` 和 `request-logs.jsonl`。原 `proxyKey` 会保持不变，新 `adminKey` 会自动生成；首次启动请保存日志里显示的管理员密钥。若原来未设置 `proxyKey`，升级后客户端需使用自动生成的 API Key，可登录控制台查看。旧浏览器保存的代理密钥不再具有管理权限，需要重新登录。
 
 ---
 
@@ -110,12 +113,14 @@ location / {
 | `rateLimitSwitchRetries` | 遇到 429 时最多换账号重试次数（0-10，默认 1），同时受 `maxRetries` 限制；仅轮询模式且有其他启用账号时生效 |
 | `retryIntervalMs` | 每次重试前等待毫秒数（0-30000，默认 0） |
 | `transportRetryStrategy` | 传输错误后 `switch` 换号或 `sticky` 同号（默认 `switch`）；单账号模式保持指定账号 |
-| `proxyKey` | 下游代理密钥；空 = 不鉴权 |
+| `proxyKey` | 客户端 API Key；缺失时自动生成，不能留空 |
+| `adminKey` | 控制台管理员密钥；与 `proxyKey` 不同，缺失时自动生成 |
+| `streamIdleTimeoutMs` | 流式上游连续无数据的超时毫秒数（1000-600000，默认 120000） |
 | `publicBaseUrl` | 公网代理地址（控制台展示用） |
 | `exposeCatalog` | `true` 时代理的 `/v1/models` 会合并 Cline 公开目录模型；默认 `false` 只返回订阅模型（避免客户端模型列表被淹没） |
 | `knownModels` | 订阅模型清单（控制台主表） |
 | `perModel` | 每模型的钉住配置：`{ upstreams, exclude, pinMode: strict|preferred, sort: cost|ttft|tps }` |
-| `apiKey` | 旧版单 key 字段，启动时自动迁移进 `accounts` |
+| `apiKey` | 旧版单账号字段，启动时迁移进 `accounts` 后移除，避免禁用账号时继续作为后备凭据 |
 
 ---
 
@@ -175,7 +180,7 @@ Cline Pass 订阅模型在 Cline 网关之后分成两条管道，钉住上游�
 | 测试台 | 任选模型+渠道发一条小请求，直接看网关是否采纳 |
 | 使用统计 | 今日请求、Token、上游自报费用、RPM/TPM、错误率、模型按请求或已知费用排名、流式占比；费用缺失时显示不可用，不按未知价格估算 |
 | 请求日志 | 记录状态、模型、账号、实际渠道、端点、Token、耗时、IP、客户端和错误；按时间、状态、模型、账号、端点、流式方式、关键词查询，每页 25/50/100 条；近 2 天自动清理 |
-| 安全与目录 | 修改代理密钥、公网代理地址和模型目录开关；浏览 Cline 公开目录，`:free` 变体可精确钉住 |
+| 安全与目录 | 分别修改控制台密钥、客户端 API Key、公网代理地址和模型目录开关；浏览 Cline 公开目录，`:free` 变体可精确钉住 |
 
 代理同时做了兼容性标准化：解包 Cline 的 `{"data":...}` 包装为标准 OpenAI 格式、错误统一为
 `{"error":{"message":...}}`、附加 `X-Cline-Target-Upstream / X-Cline-Actual-Upstream / X-Cline-Account` 等响应头。
@@ -205,7 +210,7 @@ Cline Pass 订阅模型在 Cline 网关之后分成两条管道，钉住上游�
 ## 安全提醒
 
 - `config.json` / `data/` 含明文密钥，日志文件 `request-logs.jsonl` 含请求来源 IP 和客户端信息，均已在 `.gitignore` 排除，**不要提交或分享**；配置、元数据和日志文件权限设为仅当前用户可读写；
-- 对外部署务必设置 `proxyKey`（控制台可随时轮换）；
+- 控制台密钥与客户端 API Key 必须分别保管，均可在控制台轮换；
 - `maxRetries > 0` 时可能放大请求量，注意额度消耗。账号测试、额度查询和渠道探测同样遵守全局并发与 RPM，但不使用聊天重试策略。
 
 ## License

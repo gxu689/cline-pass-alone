@@ -1,6 +1,6 @@
 {
   "port": 3123,
-  "apiKey": "",
+  "adminKey": "",
   "proxyKey": "",
   "publicBaseUrl": "",
   "exposeCatalog": false,
@@ -14,6 +14,7 @@
   "maxRetries": 2,
   "rateLimitSwitchRetries": 1,
   "retryIntervalMs": 0,
+  "streamIdleTimeoutMs": 120000,
   "transportRetryStrategy": "switch",
   "knownModels": [
     "cline-pass/glm-5.3-flash",
