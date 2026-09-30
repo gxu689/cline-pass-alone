@@ -260,8 +260,7 @@
       <label>重试间隔（毫秒）<input id="retryIntervalMs" type="number" min="0" max="30000" value="0"></label>
       <label>传输错误重试策略<select id="transportRetryStrategy"><option value="switch">换号重试</option><option value="sticky">粘滞同号重试</option></select></label>
     </div>
-    <div class="schedule-note">换号仅在账号池轮询模式且有其他启用账号时生效；单账号模式始终使用指定账号。流式响应开始后不再重试。设置与上方账号配置一起保存。</div>
-    <div style="display:flex; gap:10px; align-items:center; margin-top:10px; flex-wrap:wrap"><button onclick="saveAccounts()">保存调度设置</button><span id="scheduleStatus" class="dim" style="font-size:12px"></span></div>
+    <div class="schedule-note">换号仅在账号池轮询模式且有其他启用账号时生效；单账号模式始终使用指定账号。流式响应开始后不再重试。点上方「保存账号配置」一并保存。 <span id="scheduleStatus" class="dim"></span></div>
   </div>
 
   <div class="card" data-page="security">
@@ -515,8 +514,12 @@ function render() {
   }).join('');
   $('#subBody').innerHTML = rows;
 
+  const selectedTest = $('#testModel').value;
+  const selectedUp = $('#testUpstream').value;
   $('#testModel').innerHTML = DATA.subscription.map((s) => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.id)}</option>`).join('');
-  onTestModelChange();
+  const kept = selectedTest && [...$('#testModel').options].some((option) => option.value === selectedTest);
+  if (kept) $('#testModel').value = selectedTest;
+  onTestModelChange(kept ? selectedUp : '');
 
   $('#catSummary').textContent = `展开（共 ${DATA.catalogCount} 个目录模型）`;
   const of = DATA.officialFetch;
@@ -529,11 +532,13 @@ function renderCatalog() {
   const f = ($('#catFilter').value || '').toLowerCase();
   const list = DATA.catalog.filter((id) => !f || id.toLowerCase().includes(f)).slice(0, 400);
   $('#catBody').innerHTML = list.map((id) => {
-    const m = DATA.subscription.find((s) => s.id === id)?.meta;
+    const sub = DATA.subscription.find((s) => s.id === id);
+    const m = (DATA.meta || {})[id] || sub?.meta;
     const pinnable = id.includes(':free');
+    const action = sub ? '<span class="dim">见模型管理</span>' : `<button class="ghost" onclick="probe(${jsArg(id)}, this)">探测</button>`;
     return `<tr><td class="mono">${escapeHtml(id)}</td><td>${pinnable ? '<span class="badge green">:free 可精确钉住</span>' : '<span class="badge orange">规划器管理</span>'}</td>
     <td>${m?.lastProvider ? '<span class="badge">' + escapeHtml(m.lastProvider) + '</span>' : ''}</td>
-    <td><button class="ghost" onclick="probe(${jsArg(id)}, this)">探测</button></td></tr>`;
+    <td>${action}</td></tr>`;
   }).join('') || '<tr><td class="empty">无匹配</td></tr>';
 }
 
@@ -686,9 +691,9 @@ async function runTest() {
   finally { btn.disabled = false; btn.textContent = '发送测试'; }
 }
 
-function onTestModelChange() {
+function onTestModelChange(selected = '') {
   const m = DATA.subscription.find((s) => s.id === $('#testModel').value);
-  $('#testUpstream').innerHTML = upstreamOptions(m?.meta, null);
+  $('#testUpstream').innerHTML = upstreamOptions(m?.meta, selected);
 }
 
 // 逐次尝试明细：fireworks(✗429 781ms) → sail-research(✔ 2458ms)
@@ -1049,7 +1054,9 @@ async function testSelectedAccounts() {
 }
 
 function usageNumber(value, unit) {
-  return value == null ? '—' : `${Number(value).toLocaleString()} ${escapeHtml(unit || '')}`.trim();
+  if (value == null || !Number.isFinite(Number(value))) return '—';
+  const text = unit === 'credits' ? Number(value).toFixed(4) : Number(value).toLocaleString();
+  return `${text} ${escapeHtml(unit || '')}`.trim();
 }
 let USAGE_ITEMS = [];
 function renderUsage(items) {
@@ -1065,8 +1072,12 @@ function renderUsage(items) {
       const title = detail || (p?.resetAt ? `重置：${new Date(p.resetAt).toLocaleString()}` : '暂无周期额度数据');
       return `<div class="usage-row"><span class="usage-label">${escapeHtml(label)}</span><span class="usage-track" title="${escapeHtml(title)}"><i style="width:${pct == null ? 0 : pct.toFixed(1)}%"></i></span><strong class="usage-pct">${pct == null ? '—' : `${pct.toFixed(1)}%`}</strong>${index === 0 ? `<button class="usage-refresh" onclick="loadUsage(true, ${jsArg(u.id || '')})" title="刷新此账号用量" aria-label="刷新 ${escapeHtml(u.account)} 的用量">↻</button>` : '<span></span>'}</div>`;
     }).join('');
-    const message = shown.length ? '' : u.ok && u.remaining != null ? `余额剩余 ${usageNumber(u.remaining, u.unit)}；接口未返回比例` : escapeHtml(u.error || '接口未返回额度数据');
-    const empty = shown.length ? '' : `<div class="usage-row"><span class="usage-label">额度</span><span class="usage-track"><i style="width:0%"></i></span><strong class="usage-pct">—</strong><button class="usage-refresh" onclick="loadUsage(true, ${jsArg(u.id || '')})" title="刷新此账号用量" aria-label="刷新 ${escapeHtml(u.account)} 的用量">↻</button></div>`;
+    const balance = !shown.length && u.ok && u.remaining != null;
+    const message = shown.length || balance ? '' : escapeHtml(u.error || '接口未返回额度数据');
+    const refresh = `<button class="usage-refresh" onclick="loadUsage(true, ${jsArg(u.id || '')})" title="刷新此账号用量" aria-label="刷新 ${escapeHtml(u.account)} 的用量">↻</button>`;
+    const empty = shown.length ? '' : balance
+      ? `<div class="usage-row"><span class="usage-label">余额</span><span class="usage-track"></span><strong class="usage-pct">${usageNumber(u.remaining, u.unit)}</strong>${refresh}</div>`
+      : `<div class="usage-row"><span class="usage-label">额度</span><span class="usage-track"><i style="width:0%"></i></span><strong class="usage-pct">—</strong>${refresh}</div>`;
     return `<section class="usage-account"><div class="usage-account-title"><strong>用量</strong><span title="${escapeHtml(u.account)}">${escapeHtml(u.account)}</span></div><div class="usage-rows">${rows}${empty}${message ? `<div class="usage-message">${message}</div>` : ''}</div></section>`;
   }).join('') || '<div class="empty">暂无账号</div>';
 }
@@ -1134,7 +1145,7 @@ let statusTimer;
 function status(msg) { $('#status').textContent = msg; clearTimeout(statusTimer); statusTimer = setTimeout(() => $('#status').textContent = '', 6000); }
 
 $('#proxyBase').onclick = () => { if (DATA?.proxyBase) navigator.clipboard.writeText(DATA.proxyBase).then(() => status('已复制代理地址')); };
-$('#testModel').addEventListener('change', onTestModelChange);
+$('#testModel').addEventListener('change', () => onTestModelChange());
 $('#catFilter').addEventListener('input', renderCatalog);
 $('#loginKey').addEventListener('keydown', (e) => { if (e.key === 'Enter') tryLogin(); });
 switchPage(currentPage);

@@ -1,10 +1,10 @@
 # Cline Pass 上游控制台（cline-pass-switcher）
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-![Node](https://img.shields.io/badge/node-%E2%89%A5%2018-green)
+![Go](https://img.shields.io/badge/go-1.25%2B-00ADD8)
 ![Docker](https://img.shields.io/badge/docker-ready-2496ED)
 
-**零依赖**的 Node.js 本地/服务器代理 + 网页控制台，用于 [Cline Pass](https://cline.bot/cline-pass) 订阅：
+使用 Go 标准库实现的本地/服务器代理 + 网页控制台，用于 [Cline Pass](https://cline.bot/cline-pass) 订阅：
 
 - 🔍 **上游枚举与校验** —— 列出订阅模型背后每一条上游渠道，并一键实测哪些「✔可用 / ⏳限流 / ✘不可钉」
 - 🎯 **精确钉住上游** —— 严格钉住 / 优先+回退两种模式，支持按最低成本、最快首字、最高吞吐排序
@@ -14,7 +14,7 @@
 - 🚦 **单账号并发限制** —— 为每个账号设置同时执行的请求数，超出的请求进入该账号队列，不影响其他账号并行
 - 🚥 **流量与调度** —— 全局并发、滑动 60 秒 RPM、重试次数和间隔、429 换号、传输错误换号或同号重试；流式回复开始后不重试
 - 📥 **批量账号操作** —— 一次粘贴多行 key 导入，并可勾选多个账号批量测试
-- 💳 **额度查看** —— 参考 codex2api 的进度条布局，展示 Cline 接口实际返回的额度窗口；余额接口有总量时展示总额度比例，无权读取时显示原因。`spark` 是 codex2api 的 Codex 专属额度，不会虚构为 Cline Pass 额度
+- 💳 **额度查看** —— 官方余额是 `/balance` 的 `balance/100` credits（有活跃组织时用组织余额），不是订阅周期百分比。接口若另外返回 5h/7d/30d 窗口才画进度条；无权读取时显示原因。`spark` 是 codex2api 的 Codex 专属额度，不会虚构为 Cline Pass 额度
 - 📈 **使用统计与请求日志** —— 今日请求、Token、上游自报费用、RPM/TPM、错误率、模型分布和请求构成；日志按时间、状态、模型、账号、端点、流式方式与关键词筛选，服务端分页，自动只保留近 2 天
 - 📊 **观测** —— 每条请求自动记录实际命中的渠道、背后模型、耗时（含流式）
 - 🔑 **双密钥隔离** —— 控制台登录使用 `adminKey`，下游客户端使用 `proxyKey`；客户端 API Key 不能管理账号与安全设置
@@ -30,13 +30,13 @@
 ```bash
 git clone https://github.com/<你的用户名>/cline-pass-switcher.git
 cd cline-pass-switcher
-node server.js        # 仅需 Node ≥ 18，无需 npm install
+go run .
 ```
 
 启动日志会显示首次生成的控制台管理员密钥。打开 <http://127.0.0.1:3123/>，用该密钥登录，然后在「账号管理」里添加你的 Cline Pass 账号（`sk_` 开头的 key）并保存。
 没有 key 也能启动：页面会提示配置入口。
 
-想先查看带数据的控制台，可运行 `npm run demo`。命令会在本机启动使用虚构账号、额度和日志的演示服务，并打印访问地址；按 `Ctrl+C` 停止后会删除临时演示数据。
+如需演示数据，请先复制 `config.example.json` 到独立的 `DATA_DIR`，再按实际需要填入测试账号；服务不会内置虚构账号或额度。
 
 > Cline Pass key 从哪里来？购买 Cline Pass 订阅后，在 Cline 的账户设置里创建 API Key。
 > 订阅模型 ID 均为 `cline-pass/*` 前缀（如 `cline-pass/glm-5.2`）。
@@ -51,37 +51,22 @@ Model:    cline-pass/glm-5.2 等
 
 ---
 
-## Docker 部署
+## Docker 部署（HTTP）
 
-### 方式 A：All-in-one（自带 Caddy 自动 HTTPS，推荐新手）
+服务只监听 HTTP，不内置 HTTPS、Caddy 或证书配置，适合在内网、VPN、SSH 隧道或已有 HTTP 网关后运行：
 
 ```bash
-mkdir -p data && cp config.example.json data/config.json
-# 编辑 data/config.json，或在启动时用环境变量注入 key
-
-# 有域名（A 记录指向服务器，自动签发 Let's Encrypt 受信证书）：
-CPASS_DOMAIN=pass.example.com docker compose -f deploy/docker-compose.all-in-one.yml up -d --build
-
-# 只有 IP（自签证书，浏览器需手动信任一次）：
-docker compose -f deploy/docker-compose.all-in-one.yml up -d --build
+docker compose up -d --build
+docker compose logs -f cline-pass-console
 ```
 
-访问 `https://你的域名/`（或 `https://服务器IP/`），用启动日志中的控制台密钥登录。客户端使用页面上的独立 API Key。
+默认只绑定宿主机回环地址，访问 `http://127.0.0.1:3123/`，使用启动日志中的管理员密钥登录。客户端使用页面「访问与安全」中的独立 `proxyKey`。如需从可信内网访问，可将 Compose 端口改为 `0.0.0.0:3123:3123`，但 HTTP 会明文传输密钥和请求内容，只应配合隔离网络、VPN 或 SSH 隧道使用。
 
-### 方式 B：已有一个性化反代（nginx 门户等）
+Compose 默认使用名为 `cline-pass-data` 的 Docker volume 持久化配置、元数据和日志；如改为宿主机目录挂载，请确保目录可由容器 UID `10001` 写入。
 
-根目录的 `docker-compose.yml` 只启动应用并绑定 `127.0.0.1:3123`，由你现有的 nginx/Caddy 做 TLS：
+> `upstreamBase` 默认仍是 `https://api.cline.bot/api/v1`，这是 Go 服务访问 Cline 上游的协议；本项目自身对外提供的是明文 HTTP。
 
-```nginx
-location / {
-    proxy_pass http://127.0.0.1:3123;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-Proto https;
-    proxy_buffering off;            # 流式响应必须
-    proxy_read_timeout 600s;
-}
-```
+如需从公网访问，请自行放在可信网络、VPN 或已配置访问控制的 HTTP 反代之后，不要直接暴露管理端口。
 
 ### 环境变量
 
@@ -90,7 +75,8 @@ location / {
 | `CLINE_PASS_KEY` | 上游 Cline Pass API Key（无 config 时自动创建账号） |
 | `PROXY_KEY` | 下游代理密钥（客户端访问代理的凭据） |
 | `ADMIN_KEY` | 控制台管理员密钥（仅用于 `/api/*` 管理接口） |
-| `PUBLIC_BASE_URL` | 门户展示的公网代理地址，如 `https://pass.example.com` |
+| `CORS_ORIGIN` | 可选的跨域来源；默认不返回跨域响应头，跨域前端使用时设置为实际来源 |
+| `PUBLIC_BASE_URL` | 门户展示的代理地址，如 `http://192.168.1.20:3123` |
 | `PORT` / `BIND_HOST` / `DATA_DIR` | 端口 / 绑定地址（容器内为 0.0.0.0）/ 配置目录 |
 
 环境变量在启动时覆盖 `config.json`；此后通过控制台保存设置，会以当前生效值写回文件。未配置的 `adminKey`、`proxyKey` 会自动生成并写入 `config.json`，仅新生成的管理员密钥会在启动日志显示一次。两把密钥不能相同，管理接口必须用 `X-Admin-Key: <adminKey>`，客户端接口必须用 `Authorization: Bearer <proxyKey>`。
