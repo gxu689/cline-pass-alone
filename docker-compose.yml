@@ -3,9 +3,22 @@ services:
     build: .
     container_name: cline-pass-console
     restart: unless-stopped
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     environment:
       - DATA_DIR=/data
+      - BIND_HOST=0.0.0.0
+      - PORT=3123
     volumes:
-      - ./data:/data
+      - cline-pass-data:/data
     ports:
       - "127.0.0.1:3123:3123"
+
+volumes:
+  cline-pass-data:

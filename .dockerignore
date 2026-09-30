@@ -1,6 +1,7 @@
-node_modules
 data
 metadata.json
 _research
+cline-pass-switcher
+*.test
 *.md
 .git

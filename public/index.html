@@ -87,20 +87,73 @@
   .page-tab:hover { color:var(--text); background:var(--card2); }
   .page-tab.active { color:#fff; background:var(--accent); }
   .page-hidden { display:none !important; }
+  .overview-grid { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:12px; margin:14px 0; }
+  .overview-tile { background:var(--card2); border:1px solid var(--border); border-radius:9px; padding:15px; }
+  .overview-tile .label { color:var(--dim); font-size:12px; }
+  .overview-tile .value { font-size:26px; font-weight:700; margin:9px 0 4px; }
+  .overview-tile .detail { color:var(--dim); font-size:12px; }
+  .overview-actions { display:flex; flex-wrap:wrap; gap:8px; }
+  .global-status { color:var(--dim); font-size:12px; margin:-6px 0 12px; }
+  .global-status:empty { display:none; }
   .bulk-tools { display:flex; gap:8px; align-items:flex-start; flex-wrap:wrap; margin:12px 0 4px; }
   .bulk-tools textarea { width:min(680px, 100%); min-height:64px; resize:vertical; background:var(--card2); color:var(--text); border:1px solid var(--border); border-radius:7px; padding:8px 10px; font:12px Consolas, monospace; }
   .usage-card { margin-top:14px; padding-top:14px; border-top:1px solid var(--border); }
-  .usage-bar { display:inline-block; width:110px; height:7px; background:#2a2f3c; border-radius:5px; overflow:hidden; vertical-align:middle; margin-right:6px; }
-  .usage-bar i { display:block; height:100%; background:var(--green); }
-  @media (max-width: 760px) { body { padding:14px 10px; } .page-nav { top:4px; } .page-tab { flex:1; min-width:92px; padding:8px 7px; } .ups-panel { min-width:300px; } table { display:block; overflow-x:auto; } }
+  .usage-list { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 390px), 1fr)); gap:14px; margin-top:12px; }
+  .usage-account { overflow:hidden; border:1px solid #dfe4eb; border-radius:10px; background:#fff; box-shadow:0 1px 3px #0000000a; }
+  .usage-account-title { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:17px 60px; border-bottom:2px solid #dce2e9; color:#687384; background:#fff; }
+  .usage-account-title strong { font-size:20px; font-weight:700; letter-spacing:.02em; }
+  .usage-account-title span { font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .usage-rows { padding:25px 58px 22px 60px; background:repeating-linear-gradient(155deg, #f6f8fb 0 13px, #e9eef3 14px, #f6f8fb 15px); }
+  .usage-row { display:grid; grid-template-columns:72px minmax(90px, 1fr) 78px 24px; align-items:center; gap:18px; min-height:47px; }
+  .usage-label { color:#788395; font-size:18px; }
+  .usage-track { height:12px; background:#edf1f5; border-radius:99px; overflow:hidden; }
+  .usage-track i { display:block; height:100%; background:#10c996; border-radius:99px; }
+  .usage-pct { text-align:right; color:#2d3544; font-size:21px; font-weight:600; white-space:nowrap; }
+  .usage-refresh { background:transparent; color:#7c899a; border:0; padding:0; font-size:23px; line-height:1; }
+  .usage-refresh:hover { color:#3e708f; border:0; }
+  .usage-message { padding-top:9px; color:#687384; font-size:11px; line-height:1.5; }
+  .stats-grid { display:grid; grid-template-columns:repeat(3, minmax(180px, 1fr)); gap:12px; }
+  .stat-tile { background:var(--card2); border:1px solid var(--border); border-radius:10px; padding:16px; min-height:112px; }
+  .stat-tile .label { color:var(--dim); font-size:12px; }
+  .stat-tile .value { font-size:27px; font-weight:700; margin:11px 0 5px; }
+  .stat-tile .detail { color:var(--dim); font-size:11px; line-height:1.5; }
+  .stats-detail { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:14px; }
+  .stat-model { display:grid; grid-template-columns:minmax(120px, 1fr) 66px 80px; gap:9px; align-items:center; padding:10px 0; border-bottom:1px solid var(--border); font-size:12px; }
+  .stat-model .meter { grid-column:1 / -1; height:5px; border-radius:5px; background:var(--border); overflow:hidden; }
+  .stat-model .meter i { display:block; height:100%; background:var(--accent); }
+  .stat-heading { display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; }
+  .stat-heading h2 { margin:0; }
+  .stat-model-mode { display:flex; gap:4px; background:var(--card2); border-radius:7px; padding:3px; }
+  .stat-model-mode button { background:transparent; color:var(--dim); padding:5px 9px; }
+  .stat-model-mode button.active { background:var(--accent); color:#fff; }
+  .composition-track { display:flex; height:12px; background:var(--border); border-radius:99px; overflow:hidden; margin:14px 0 10px; }
+  .composition-track i { display:block; background:var(--accent); }
+  .composition-legend { display:flex; justify-content:space-between; gap:12px; color:var(--dim); font-size:12px; }
+  .filter-tabs { display:flex; flex-wrap:wrap; gap:6px; margin:12px 0; }
+  .filter-tabs button { background:var(--card2); border:1px solid var(--border); color:var(--dim); }
+  .filter-tabs button.active { color:var(--text); border-color:var(--accent); background:#23344f; }
+  .log-filters { display:grid; grid-template-columns:minmax(220px, 2fr) repeat(4, minmax(115px, 1fr)); gap:8px; margin:12px 0; }
+  .log-filters input, .log-filters select, .history-custom input { width:100%; max-width:none; background:var(--card2); color:var(--text); border:1px solid var(--border); border-radius:7px; padding:8px 10px; font-size:12px; }
+  .history-custom { display:flex; gap:8px; align-items:center; margin:9px 0; color:var(--dim); font-size:12px; }
+  .log-counts { display:flex; flex-wrap:wrap; gap:8px; margin:10px 0; }
+  .log-counts span { background:var(--card2); border:1px solid var(--border); border-radius:7px; padding:7px 10px; color:var(--dim); font-size:12px; }
+  .log-counts b { color:var(--text); margin-left:5px; }
+  .history-wrap { overflow-x:auto; }
+  .history-wrap table { min-width:1030px; }
+  .history-pager { display:flex; gap:10px; align-items:center; justify-content:flex-end; flex-wrap:wrap; margin-top:12px; font-size:12px; color:var(--dim); }
+  .schedule-grid { display:grid; grid-template-columns:repeat(2, minmax(220px, 1fr)); gap:14px 22px; margin:12px 0; }
+  .schedule-grid label { display:flex; flex-direction:column; gap:6px; color:var(--dim); font-size:12px; }
+  .schedule-grid input, .schedule-grid select { width:100%; max-width:none; padding:8px 10px; }
+  .schedule-note { color:var(--dim); font-size:12px; line-height:1.6; }
+  @media (max-width: 760px) { body { padding:14px 10px; } .page-nav { top:4px; } .page-tab { flex:1; min-width:92px; padding:8px 7px; } .ups-panel { min-width:300px; } .schedule-grid, .stats-detail, .log-filters { grid-template-columns:1fr; } .stats-grid, .overview-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .usage-row { grid-template-columns:60px minmax(55px, 1fr) 72px 24px; gap:9px; } .usage-account-title { padding:17px 14px; } .usage-rows { padding:18px 14px; } table { display:block; overflow-x:auto; } }
 </style>
 </head>
 <body>
   <div id="loginOverlay" style="display:none; position:fixed; inset:0; background:rgba(8,10,14,.85); z-index:50; align-items:center; justify-content:center;">
     <div style="background:var(--card); border:1px solid var(--border); border-radius:12px; padding:28px; width:360px;">
       <h2 style="font-size:16px; margin-bottom:6px;">Cline Pass 上游控制台</h2>
-      <p class="dim" style="font-size:13px; margin-bottom:14px;">此部署已启用代理密钥保护，请输入密钥访问控制台。</p>
-      <input id="loginKey" type="password" placeholder="代理密钥" style="width:100%; background:var(--card2); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:9px 10px; font-size:14px;">
+      <p class="dim" style="font-size:13px; margin-bottom:14px;">请输入控制台专用密钥。客户端 API Key 不能登录管理页面。</p>
+      <input id="loginKey" type="password" placeholder="控制台密钥" style="width:100%; background:var(--card2); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:9px 10px; font-size:14px;">
       <div id="loginErr" style="color:var(--red); font-size:12px; margin-top:6px;"></div>
       <button style="width:100%; margin-top:12px;" onclick="tryLogin()">进入控制台</button>
     </div>
@@ -110,10 +163,10 @@
   <div class="sub">本地代理 + 观测面板 —— 枚举订阅模型背后的上游，多上游按优先级自动故障转移，支持精确钉住 / 优先回退 / 排除上游 / 成本·首字·吞吐排序</div>
 
   <div id="noKeyBanner" class="banner" data-page="overview" style="display:none; border-left-color: var(--red);">
-    <b>尚未配置上游 API Key：</b>在下方「账号管理」添加你的 Cline Pass 账号（sk_ 开头的 key）并保存即可开始使用；也可通过 config.json 的 accounts 或环境变量 CLINE_PASS_KEY 提供。
+    <b>尚未配置上游 API Key：</b>请到「账号池」页面添加 Cline Pass 账号并保存；也可通过 config.json 的 accounts 或环境变量 CLINE_PASS_KEY 提供。
   </div>
 
-  <div class="banner" data-page="overview">
+  <details class="card" data-page="overview"><summary>查看上游路由工作方式与实测说明</summary><div class="banner" style="margin:12px 0 0">
     <b>实测结论（决定了本工具的工作方式）：</b><br>
     ① <b>上游可枚举、可观测</b>：订阅模型响应元数据里带背后真正的模型 ID、可用上游列表与本次实际命中的上游；
     「探测」按钮还会用一次零 token 消耗的假上游请求让网关报出精确的可用上游清单（直连→OpenRouter，规划器→Vercel AI Gateway）。<br>
@@ -123,23 +176,38 @@
     Cline 会丢弃顶层 <code class="mono">provider</code> 简写里的 <code class="mono">only/order</code>，但会透传 <code class="mono">providerOptions.gateway</code>。
     两类管道还都支持 <code class="mono">sort</code>（最低成本 / 最快首字 / 最高吞吐）。<br>
     ③ <b>目录模型 :free 变体</b>：属于直连管道，可精确钉住。<br>
-    ④ <b>多上游优先级 + 故障转移</b>：勾选多个上游即按勾选顺序逐个尝试——第一个异常（报错/网络失败/超时）自动顺切下一个，全部失败才把错误透传给客户端；「排除」的上游永不被使用（自动模式下会向网关注入排除偏好）。流式请求在首包（SSE 开始）前同样可切换，SSE 开始后透传不可重试。
-  </div>
+    ④ <b>多上游优先级 + 故障转移</b>：勾选多个上游即按勾选顺序逐个尝试；当前渠道按调度策略重试后仍失败，再顺切下一个。全部失败才把错误透传给客户端；「排除」的上游永不被使用（自动模式下会向网关注入排除偏好）。流式请求在首包（SSE 开始）前同样可切换，SSE 开始后透传不可重试。
+  </div></details>
 
   <div class="toolbar" data-page="overview">
     <span class="chip" id="proxyBase" title="点击复制：把任意 OpenAI 兼容客户端的 Base URL 指向这里"></span>
     <button class="ghost" onclick="loadAll()">↻ 刷新</button>
-    <button class="ghost" onclick="probeAll()" id="probeAllBtn">批量探测订阅模型</button>
-    <span class="dim" style="font-size:12px" id="status"></span>
+    <button class="ghost" onclick="probeAll()" id="probeAllBtn" disabled>批量探测订阅模型</button>
   </div>
 
   <nav class="page-nav" aria-label="控制台页面">
     <button class="page-tab active" data-page-tab="overview" onclick="switchPage('overview', this)">概览</button>
     <button class="page-tab" data-page-tab="accounts" onclick="switchPage('accounts', this)">账号池</button>
     <button class="page-tab" data-page-tab="models" onclick="switchPage('models', this)">模型管理</button>
-    <button class="page-tab" data-page-tab="testing" onclick="switchPage('testing', this)">测试与历史</button>
+    <button class="page-tab" data-page-tab="testing" onclick="switchPage('testing', this)">测试台</button>
+    <button class="page-tab" data-page-tab="stats" onclick="switchPage('stats', this)">使用统计</button>
+    <button class="page-tab" data-page-tab="logs" onclick="switchPage('logs', this)">请求日志</button>
     <button class="page-tab" data-page-tab="security" onclick="switchPage('security', this)">安全与目录</button>
   </nav>
+  <div id="status" class="global-status" role="status"></div>
+  <div id="pageNotice" class="banner" role="alert" style="display:none"></div>
+
+  <div class="card" data-page="overview">
+    <h2>运行概览</h2>
+    <div class="dim" style="font-size:12px">以下状态来自当前服务；切换页面可查看详细配置、统计和日志。</div>
+    <div class="overview-grid">
+      <div class="overview-tile"><div class="label">账号池</div><div class="value" id="overviewAccounts">—</div><div class="detail">已启用 / 总账号</div></div>
+      <div class="overview-tile"><div class="label">当前调度</div><div class="value" id="overviewActive">—</div><div class="detail" id="overviewQueue">运行 / 排队</div></div>
+      <div class="overview-tile"><div class="label">今日请求</div><div class="value" id="overviewRequests">—</div><div class="detail" id="overviewErrors">错误 —</div></div>
+      <div class="overview-tile"><div class="label">订阅模型</div><div class="value" id="overviewModels">—</div><div class="detail">可在模型管理页探测</div></div>
+    </div>
+    <div class="overview-actions"><button onclick="switchPage('accounts')">管理账号与并发</button><button class="ghost" onclick="switchPage('models')">管理模型路由</button><button class="ghost" onclick="switchPage('stats')">查看使用统计</button><button class="ghost" onclick="switchPage('logs')">查询请求日志</button></div>
+  </div>
 
   <div class="card" data-page="accounts">
     <h2>账号管理（Cline Pass 账号池）</h2>
@@ -172,22 +240,41 @@
     <div id="batchTestMsg" class="result" style="display:none"></div>
     <div class="usage-card">
       <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
-        <h2 style="margin:0">账号额度</h2>
-        <button class="ghost" onclick="loadUsage(true)" id="usageRefreshBtn">↻ 刷新额度</button>
+        <h2 style="margin:0">账号用量</h2>
+        <button class="ghost" onclick="loadUsage(true)" id="usageRefreshBtn">↻ 全部刷新</button>
       </div>
-      <div class="dim" style="font-size:12px; margin:6px 0 10px">尝试从 Cline 官方账户接口读取余额。普通 API Key 可能无权访问账户资料；无法读取时会显示原因。</div>
-      <table><thead><tr><th>账号</th><th>已用</th><th>上限</th><th>剩余</th><th>重置时间</th><th>来源</th></tr></thead><tbody id="usageBody"><tr><td colspan="6" class="empty">点击刷新额度</td></tr></tbody></table>
+      <div class="dim" style="font-size:12px; margin-top:6px">按账号显示接口实际返回的额度窗口；无权限时显示原因，不估算百分比。</div>
+      <div id="usageBody" class="usage-list"><div class="empty">点击刷新额度</div></div>
       <div id="usageStatus" class="dim" style="font-size:12px; margin-top:8px"></div>
     </div>
   </div>
 
+  <div class="card" data-page="accounts">
+    <h2>流量与调度</h2>
+    <div class="schedule-note">所有上游请求共用全局并发和 RPM 限制；单账号并发仍独立生效。排队上限为 200，RPM 按滑动 60 秒统计。</div>
+    <div class="schedule-grid">
+      <label>最大并发数<input id="globalConcurrency" type="number" min="1" max="128" value="3" title="所有账号合计同时执行的上游请求数"></label>
+      <label>全局 RPM 限制<input id="globalRpm" type="number" min="0" max="60000" value="0" title="每 60 秒最多发起的上游请求数；0 表示不限"></label>
+      <label>最大重试次数<input id="maxRetries" type="number" min="0" max="10" value="2" title="单个代理请求额外尝试次数；切换上游渠道不计入"></label>
+      <label>429 换号重试次数<input id="rateLimitSwitchRetries" type="number" min="0" max="10" value="1" title="429 时最多换账号重试次数，仍受最大重试次数限制"></label>
+      <label>重试间隔（毫秒）<input id="retryIntervalMs" type="number" min="0" max="30000" value="0"></label>
+      <label>传输错误重试策略<select id="transportRetryStrategy"><option value="switch">换号重试</option><option value="sticky">粘滞同号重试</option></select></label>
+    </div>
+    <div class="schedule-note">换号仅在账号池轮询模式且有其他启用账号时生效；单账号模式始终使用指定账号。流式响应开始后不再重试。点上方「保存账号配置」一并保存。 <span id="scheduleStatus" class="dim"></span></div>
+  </div>
+
   <div class="card" data-page="security">
-    <h2>访问与安全（下游密钥）</h2>
+    <h2>访问与安全</h2>
     <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-      <label class="dim" style="font-size:13px">代理密钥：</label>
-      <input id="secProxyKey" type="password" placeholder="空 = 关闭鉴权" style="width:340px; background:var(--card2); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:7px 10px; font-family:Consolas, monospace; font-size:13px">
-      <label class="dim" style="font-size:12px"><input type="checkbox" id="secShow" onchange="$('#secProxyKey').type=this.checked?'text':'password'"> 显示</label>
+      <label class="dim" style="font-size:13px">控制台登录密钥：</label>
+      <input id="secAdminKey" type="password" placeholder="管理页面专用" style="width:340px; background:var(--card2); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:7px 10px; font-family:Consolas, monospace; font-size:13px">
+      <label class="dim" style="font-size:12px"><input type="checkbox" id="secAdminShow" onchange="$('#secAdminKey').type=this.checked?'text':'password'"> 显示</label>
       <span id="secBadge" class="badge"></span>
+    </div>
+    <div style="display:flex; gap:10px; align-items:center; margin-top:8px; flex-wrap:wrap;">
+      <label class="dim" style="font-size:13px">客户端 API Key：</label>
+      <input id="secProxyKey" type="password" placeholder="OpenAI 客户端专用" style="width:340px; background:var(--card2); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:7px 10px; font-family:Consolas, monospace; font-size:13px">
+      <label class="dim" style="font-size:12px"><input type="checkbox" id="secShow" onchange="$('#secProxyKey').type=this.checked?'text':'password'"> 显示</label>
     </div>
     <div style="display:flex; gap:10px; align-items:center; margin-top:8px; flex-wrap:wrap;">
       <label class="dim" style="font-size:13px">公网代理地址：</label>
@@ -195,7 +282,7 @@
     </div>
     <div style="display:flex; gap:10px; align-items:center; margin-top:12px; flex-wrap:wrap;">
       <button onclick="saveSecurity()">保存访问设置</button>
-      <span class="dim" style="font-size:12px">修改密钥后，客户端需改用新密钥；控制台会自动更新本机保存的密钥，不会被锁在外面。</span>
+      <span class="dim" style="font-size:12px">两把密钥必须不同且不能为空；修改客户端 API Key 后需更新客户端，修改控制台密钥后当前浏览器会自动更新。</span>
       <span class="dim" style="font-size:12px" id="secMsg"></span>
     </div>
   </div>
@@ -228,12 +315,22 @@
     <div class="result" id="testResult"></div>
   </div>
 
-  <div class="card" data-page="testing">
-    <h2>请求历史（最近 100 条，经代理的请求自动记录）</h2>
-    <table>
-      <thead><tr><th>时间</th><th>模型</th><th>账号</th><th>实际上游</th><th>背后模型</th><th>耗时</th><th>方式</th><th>尝试序列</th></tr></thead>
-      <tbody id="histBody"><tr><td colspan="7" class="empty">暂无记录</td></tr></tbody>
-    </table>
+  <div class="card" data-page="stats">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><div><h2 style="margin:0">使用统计</h2><div class="dim" style="font-size:12px;margin-top:5px">请求日志与性能指标 · 今日按浏览器本地日期计算</div></div><button class="ghost" onclick="loadStats()">↻ 刷新</button></div>
+    <div id="statsCards" class="stats-grid" style="margin-top:16px"><div class="empty">加载中…</div></div>
+    <div class="stats-detail"><div class="card" style="margin:0"><div class="stat-heading"><h2>模型统计</h2><div class="stat-model-mode"><button id="statsByRequests" class="active" onclick="setStatsModelMode('requests')">按请求</button><button id="statsByCost" onclick="setStatsModelMode('cost')">按金额</button></div></div><div class="dim" id="statsModelNote" style="font-size:12px;margin:9px 0">今日主要模型的请求与 Token</div><div id="statsModels"></div></div><div class="card" style="margin:0"><h2>请求构成</h2><div id="statsComposition"></div></div></div>
+    <div id="statsStatus" class="dim" style="font-size:12px;margin-top:10px"></div>
+  </div>
+
+  <div class="card" data-page="logs">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h2 style="margin:0">请求记录</h2><div><span id="histTotal" class="dim" style="font-size:12px;margin-right:8px">0 条记录</span><button class="ghost" onclick="loadHistory()">↻ 刷新</button></div></div>
+    <div id="histRanges" class="filter-tabs"><button data-range="today" class="active" onclick="setHistoryRange('today')">今日</button><button data-range="1h" onclick="setHistoryRange('1h')">1 小时</button><button data-range="6h" onclick="setHistoryRange('6h')">6 小时</button><button data-range="24h" onclick="setHistoryRange('24h')">24 小时</button><button data-range="2d" onclick="setHistoryRange('2d')">2 天</button><button data-range="custom" onclick="setHistoryRange('custom')">自定义</button></div>
+    <div id="histCustom" class="history-custom" style="display:none"><label>开始 <input id="histFrom" type="datetime-local" onchange="historyFiltersChanged()"></label><label>结束 <input id="histTo" type="datetime-local" onchange="historyFiltersChanged()"></label></div>
+    <div id="histStatuses" class="filter-tabs"><button data-status="all" class="active" onclick="setHistoryStatus('all')">全部</button><button data-status="success" onclick="setHistoryStatus('success')">成功</button><button data-status="error" onclick="setHistoryStatus('error')">全部错误</button><button data-status="4xx" onclick="setHistoryStatus('4xx')">4xx</button><button data-status="5xx" onclick="setHistoryStatus('5xx')">5xx</button><button data-status="500" onclick="setHistoryStatus('500')">500</button><button data-status="401" onclick="setHistoryStatus('401')">401</button><button data-status="429" onclick="setHistoryStatus('429')">429</button><button data-status="499" onclick="setHistoryStatus('499')">499</button></div>
+    <div id="histCounts" class="log-counts"></div>
+    <div class="log-filters"><input id="histSearch" placeholder="搜索错误、模型、账号、端点、渠道、IP 或客户端…" oninput="historySearchChanged()"><select id="histModel" onchange="historyFiltersChanged()"><option value="">全部模型</option></select><select id="histAccount" onchange="historyFiltersChanged()"><option value="">全部账号</option></select><select id="histEndpoint" onchange="historyFiltersChanged()"><option value="">全部端点</option></select><select id="histStream" onchange="historyFiltersChanged()"><option value="all">全部方式</option><option value="stream">流式</option><option value="sync">非流式</option></select></div>
+    <div class="history-wrap"><table><thead><tr><th>时间</th><th>状态</th><th>模型</th><th>账号</th><th>实际上游</th><th>端点</th><th>Token</th><th>耗时</th><th>方式</th><th>来源 IP / 客户端</th><th>错误 / 尝试</th></tr></thead><tbody id="histBody"><tr><td colspan="11" class="empty">加载中…</td></tr></tbody></table></div>
+    <div class="history-pager"><span>日志自动保留近 2 天</span><label>每页 <select id="histPageSize" onchange="historyFiltersChanged()"><option>25</option><option selected>50</option><option>100</option></select> 条</label><button class="ghost" id="histPrev" onclick="historyPage(-1)">上一页</button><span id="histPageInfo">第 1 页</span><button class="ghost" id="histNext" onclick="historyPage(1)">下一页</button></div>
   </div>
 
   <div class="card" data-page="security">
@@ -250,7 +347,8 @@
 
 <script>
 let DATA = null;
-let AUTH_KEY = localStorage.getItem('cps_key') || '';
+localStorage.removeItem('cps_key'); // 旧版本在此保存的是客户端密钥，不再允许用来管理控制台。
+let AUTH_KEY = localStorage.getItem('cps_admin_key') || '';
 const $ = (s) => document.querySelector(s);
 const fmt = (ts) => new Date(ts).toLocaleTimeString();
 const escapeHtml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -263,19 +361,41 @@ async function api(path, body) {
   if (res.status === 401) { showLogin(); throw new Error('unauthorized'); }
   return res.json();
 }
+async function getApi(path) {
+  const result = await api(path);
+  if (result?.error) throw new Error(typeof result.error === 'string' ? result.error : result.error.message || '请求失败');
+  return result;
+}
+function showNotice(message = '') {
+  const el = $('#pageNotice');
+  el.textContent = message;
+  el.style.display = message ? 'block' : 'none';
+}
+function renderOverview() {
+  if (ACCS) {
+    const total = ACCS.accounts?.length || 0;
+    $('#overviewAccounts').textContent = `${(ACCS.accounts || []).filter((a) => a.enabled !== false).length} / ${total}`;
+    $('#overviewActive').textContent = String(ACCS.scheduling?.active ?? 0);
+    $('#overviewQueue').textContent = `运行中 · 排队 ${ACCS.scheduling?.queued ?? 0}`;
+  }
+  if (DATA) $('#overviewModels').textContent = String(DATA.subscription?.length ?? 0);
+  if (STATS_DATA) {
+    $('#overviewRequests').textContent = Number(STATS_DATA.today?.requests || 0).toLocaleString();
+    $('#overviewErrors').textContent = `错误 ${STATS_DATA.today?.errors ?? 0} · 最近 2 天日志`;
+  }
+}
 
 function showLogin() { $('#loginOverlay').style.display = 'flex'; setTimeout(() => $('#loginKey').focus(), 50); }
 async function tryLogin() {
   const k = $('#loginKey').value.trim();
   if (!k) return;
-  const res = await fetch('/api/models', { headers: { 'X-Admin-Key': k } });
-  if (res.ok) {
-    AUTH_KEY = k; localStorage.setItem('cps_key', k);
+  try {
+    const res = await fetch('/api/security', { headers: { 'X-Admin-Key': k } });
+    if (!res.ok) { $('#loginErr').textContent = '密钥错误，请重试'; return; }
+    AUTH_KEY = k; localStorage.setItem('cps_admin_key', k);
     $('#loginOverlay').style.display = 'none'; $('#loginErr').textContent = '';
-    loadAll();
-  } else {
-    $('#loginErr').textContent = '密钥错误，请重试';
-  }
+    loadAll().catch(() => showNotice('控制台数据加载失败，请刷新重试'));
+  } catch { $('#loginErr').textContent = '无法连接服务，请稍后重试'; }
 }
 
 const ST_TAG = { ok: '✔可用', limited: '⏳限流', bad: '✘不可钉', auth: '🔑key错' };
@@ -355,6 +475,7 @@ function summaryChips(cfg) {
 
 function render() {
   $('#proxyBase').textContent = '代理地址：' + DATA.proxyBase + '（点击复制）';
+  $('#probeAllBtn').disabled = false;
   const rows = DATA.subscription.map((s) => {
     const m = s.meta;
     const ups = (m?.upstreams?.length ?? null);
@@ -393,48 +514,63 @@ function render() {
   }).join('');
   $('#subBody').innerHTML = rows;
 
+  const selectedTest = $('#testModel').value;
+  const selectedUp = $('#testUpstream').value;
   $('#testModel').innerHTML = DATA.subscription.map((s) => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.id)}</option>`).join('');
-  onTestModelChange();
+  const kept = selectedTest && [...$('#testModel').options].some((option) => option.value === selectedTest);
+  if (kept) $('#testModel').value = selectedTest;
+  onTestModelChange(kept ? selectedUp : '');
 
   $('#catSummary').textContent = `展开（共 ${DATA.catalogCount} 个目录模型）`;
   const of = DATA.officialFetch;
   $('#officialInfo').textContent = of ? `上次拉取 ${new Date(of.ts).toLocaleString()}（${(of.sources || []).join('+')}，新增 ${of.added.length}）` : '尚未拉取过官方清单';
   renderCatalog();
 
-  loadHistory();
 }
 
 function renderCatalog() {
   const f = ($('#catFilter').value || '').toLowerCase();
   const list = DATA.catalog.filter((id) => !f || id.toLowerCase().includes(f)).slice(0, 400);
   $('#catBody').innerHTML = list.map((id) => {
-    const m = DATA.subscription.find((s) => s.id === id)?.meta;
+    const sub = DATA.subscription.find((s) => s.id === id);
+    const m = (DATA.meta || {})[id] || sub?.meta;
     const pinnable = id.includes(':free');
+    const action = sub ? '<span class="dim">见模型管理</span>' : `<button class="ghost" onclick="probe(${jsArg(id)}, this)">探测</button>`;
     return `<tr><td class="mono">${escapeHtml(id)}</td><td>${pinnable ? '<span class="badge green">:free 可精确钉住</span>' : '<span class="badge orange">规划器管理</span>'}</td>
     <td>${m?.lastProvider ? '<span class="badge">' + escapeHtml(m.lastProvider) + '</span>' : ''}</td>
-    <td><button class="ghost" onclick="probe(${jsArg(id)}, this)">探测</button></td></tr>`;
+    <td>${action}</td></tr>`;
   }).join('') || '<tr><td class="empty">无匹配</td></tr>';
 }
 
 async function loadAll() {
-  await Promise.all([
-    api('/api/models').then((models) => { DATA = models; render(); }),
-    api('/api/accounts').then((accs) => {
+  const results = await Promise.allSettled([
+    getApi('/api/models').then((models) => { DATA = models; render(); renderOverview(); }),
+    getApi('/api/accounts').then((accs) => {
       ACCS = accs; renderAccounts();
       $('#accountConcurrency').value = ACCS.accountConcurrency || 1;
-      loadUsage(false).catch(() => {});
+      for (const id of ['globalConcurrency', 'globalRpm', 'maxRetries', 'rateLimitSwitchRetries', 'retryIntervalMs', 'transportRetryStrategy']) {
+        $(`#${id}`).value = ACCS[id];
+      }
+      $('#scheduleStatus').textContent = `当前运行 ${ACCS.scheduling?.active || 0} · 排队 ${ACCS.scheduling?.queued || 0}`;
+      renderOverview();
+      if (currentPage === 'accounts') loadUsage(false).catch(() => {});
     }),
-    api('/api/security').then(renderSecurity),
-    api('/api/meta').then((meta) => { $('#noKeyBanner').style.display = meta.configured ? 'none' : 'block'; }),
+    getApi('/api/security').then(renderSecurity),
+    getApi('/api/meta').then((meta) => { $('#noKeyBanner').style.display = meta.configured ? 'none' : 'block'; }),
   ]);
+  const failures = results.filter((r) => r.status === 'rejected');
+  showNotice(failures.length ? `${failures.length} 项控制台数据加载失败，请检查服务连接或代理密钥后刷新。` : '');
+  if (currentPage === 'overview' || currentPage === 'stats') await loadStats();
+  if (currentPage === 'logs') await loadHistory();
 }
 
 function renderSecurity(sec) {
+  $('#secAdminKey').value = sec.adminKey || '';
   $('#secProxyKey').value = sec.proxyKey || '';
   $('#secPublicBase').value = sec.publicBaseUrl || '';
   const badge = $('#secBadge');
-  badge.textContent = sec.authRequired ? '鉴权已开启' : '鉴权已关闭';
-  badge.className = sec.authRequired ? 'badge green' : 'badge orange';
+  badge.textContent = '双密钥保护已开启';
+  badge.className = 'badge green';
   const ec = $('#exposeCatalog');
   if (ec) ec.checked = !!sec.exposeCatalog;
 }
@@ -447,17 +583,18 @@ async function saveExposeCatalog(v) {
 
 async function saveSecurity() {
   const payload = {
+    adminKey: $('#secAdminKey').value.trim(),
     proxyKey: $('#secProxyKey').value.trim(),
     publicBaseUrl: $('#secPublicBase').value.trim(),
   };
   const r = await api('/api/security', payload);
   if (r.ok) {
-    // 控制台鉴权与代理密钥同源：改完立即换新密钥，避免会话失效
-    if (r.proxyKey) { AUTH_KEY = r.proxyKey; localStorage.setItem('cps_key', r.proxyKey); }
+    // 管理密钥轮换后立即更新当前浏览器，避免会话失效。
+    AUTH_KEY = r.adminKey; localStorage.setItem('cps_admin_key', r.adminKey);
     renderSecurity(r);
-    DATA.proxyBase = r.proxyBase;
+    if (DATA) DATA.proxyBase = r.proxyBase;
     $('#proxyBase').textContent = '代理地址：' + r.proxyBase + '（点击复制）';
-    secMsg('已保存' + (r.authRequired ? '，鉴权开启' : '，鉴权已关闭（任何客户端都可访问代理）'));
+    secMsg('已保存；控制台与客户端使用不同密钥');
   } else secMsg(r.error?.message || '保存失败', true);
 }
 
@@ -471,20 +608,26 @@ function secMsg(msg, isErr) {
 
 async function probe(id, btn) {
   btn.disabled = true; btn.textContent = '探测中…'; status('正在探测 ' + id);
-  const r = await api('/api/probe', { model: id });
-  btn.disabled = false; btn.textContent = '探测';
-  status(r.ok ? `${id} 探测完成：上游 ${r.upstreams?.length ?? 0} 个，命中 ${r.lastProvider}` : `探测失败：${r.error}`);
-  await loadAll();
+  try {
+    const r = await api('/api/probe', { model: id });
+    status(r.ok ? `${id} 探测完成：上游 ${r.upstreams?.length ?? 0} 个，命中 ${r.lastProvider}` : `探测失败：${r.error?.message || r.error}`);
+    if (r.ok) await loadAll();
+  } catch (e) { status(`探测失败：${e.message}`); }
+  finally { btn.disabled = false; btn.textContent = '探测'; }
 }
 
 async function probeAll() {
   const btn = $('#probeAllBtn'); btn.disabled = true;
-  for (const s of DATA.subscription) {
-    btn.textContent = `探测中 ${s.id}`;
-    await api('/api/probe', { model: s.id });
-  }
-  btn.disabled = false; btn.textContent = '批量探测订阅模型';
-  await loadAll();
+  let failed = 0;
+  try {
+    for (const s of DATA?.subscription || []) {
+      btn.textContent = `探测中 ${s.id}`;
+      try { if (!(await api('/api/probe', { model: s.id })).ok) failed++; }
+      catch { failed++; }
+    }
+    await loadAll();
+    status(failed ? `批量探测完成，${failed} 个模型失败` : '批量探测完成');
+  } finally { btn.disabled = false; btn.textContent = '批量探测订阅模型'; }
 }
 
 async function test(id, btn) {
@@ -495,9 +638,12 @@ async function test(id, btn) {
   const excl = [...tr.querySelectorAll('.uprow')].filter((r) => r.querySelector('.pill.excl-on')).map((r) => r.dataset.u);
   const body = { model: id };
   if (sel.length || excl.length || tr.querySelector('.uprow')) { body.upstreams = sel; body.exclude = excl; }
-  const r = await api('/api/test', body);
-  btn.disabled = false; btn.textContent = '测试';
-  showTest(r, id, sel);
+  try { showTest(await api('/api/test', body), id, sel); }
+  catch (e) { showTest({ ok: false, error: e.message }, id, sel); }
+  finally { btn.disabled = false; btn.textContent = '测试'; }
+  $('#testModel').value = id;
+  onTestModelChange();
+  switchPage('testing');
 }
 
 let LAST_ADDED = [];
@@ -540,20 +686,20 @@ async function validate(id, btn) {
 async function runTest() {
   const btn = $('#testBtn'); btn.disabled = true; btn.textContent = '发送中…';
   const model = $('#testModel').value, up = $('#testUpstream').value || null;
-  const r = await api('/api/test', { model, upstreams: up ? [up] : [] });
-  btn.disabled = false; btn.textContent = '发送测试';
-  showTest(r, model, up ? [up] : []);
+  try { showTest(await api('/api/test', { model, upstreams: up ? [up] : [] }), model, up ? [up] : []); }
+  catch (e) { showTest({ ok: false, error: e.message }, model, up ? [up] : []); }
+  finally { btn.disabled = false; btn.textContent = '发送测试'; }
 }
 
-function onTestModelChange() {
+function onTestModelChange(selected = '') {
   const m = DATA.subscription.find((s) => s.id === $('#testModel').value);
-  $('#testUpstream').innerHTML = upstreamOptions(m?.meta, null);
+  $('#testUpstream').innerHTML = upstreamOptions(m?.meta, selected);
 }
 
 // 逐次尝试明细：fireworks(✗429 781ms) → sail-research(✔ 2458ms)
 function traceHtml(trace) {
   if (!trace?.length) return '';
-  const parts = trace.map((t) => `<span class="tr ${t.status === 200 ? 'ok' : 'bad'}">${escapeHtml(t.upstream || 'auto')}(${t.status === 200 ? '✔' : '✗' + escapeHtml(t.status)} ${escapeHtml(t.ms)}ms${t.note && t.status !== 200 && t.note !== 'ok' ? ' · ' + escapeHtml(String(t.note).slice(0, 60)) : ''})</span>`);
+  const parts = trace.map((t) => `<span class="tr ${t.status === 200 ? 'ok' : 'bad'}">${escapeHtml(t.upstream || 'auto')}${t.account ? ' · ' + escapeHtml(t.account) : ''}(${t.status === 200 ? '✔' : '✗' + escapeHtml(t.status)} ${escapeHtml(t.ms)}ms${t.note && t.status !== 200 && t.note !== 'ok' ? ' · ' + escapeHtml(String(t.note).slice(0, 60)) : ''})</span>`);
   return `<div class="trace">尝试序列：${parts.join(' → ')}</div>`;
 }
 
@@ -561,7 +707,7 @@ function showTest(r, model, target) {
   const el = $('#testResult'); el.style.display = 'block';
   const targets = Array.isArray(target) ? target : target ? [target] : [];
   if (!r.ok) {
-    el.innerHTML = `<span class="mismatch">请求失败：${escapeHtml(r.error || '')}</span>${traceHtml(r.trace)}`;
+    el.innerHTML = `<div class="dim">模型：${escapeHtml(model)}</div><span class="mismatch">请求失败：${escapeHtml(r.error?.message || r.error || '')}</span>${traceHtml(r.trace)}`;
     return;
   }
   const hit = !targets.length || r.actual === targets[0];
@@ -696,17 +842,96 @@ function bulkUp(id, action) {
   }
 }
 
+const compact = (value) => { const n = Number(value) || 0; return n >= 1e9 ? `${(n / 1e9).toFixed(1)}B` : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}K` : String(n); };
+let STATS_DATA = null;
+let STATS_MODEL_MODE = 'requests';
+function setStatsModelMode(mode) { STATS_MODEL_MODE = mode; renderStatsModels(); }
+function renderStatsModels() {
+  if (!STATS_DATA) return;
+  $('#statsByRequests').classList.toggle('active', STATS_MODEL_MODE === 'requests');
+  $('#statsByCost').classList.toggle('active', STATS_MODEL_MODE === 'cost');
+  const models = (STATS_DATA.models || []).filter((m) => STATS_MODEL_MODE !== 'cost' || m.costSamples > 0)
+    .sort((a, b) => STATS_MODEL_MODE === 'cost' ? b.cost - a.cost : b.requests - a.requests).slice(0, 10);
+  const max = Math.max(1, ...models.map((m) => STATS_MODEL_MODE === 'cost' ? m.cost : m.requests));
+  $('#statsModelNote').textContent = STATS_MODEL_MODE === 'cost' ? '仅统计上游返回费用的请求，未返回费用的模型不参与排名' : '今日主要模型的请求与 Token';
+  $('#statsModels').innerHTML = models.map((m) => {
+    const value = STATS_MODEL_MODE === 'cost' ? m.cost : m.requests;
+    const metric = STATS_MODEL_MODE === 'cost' ? `$${Number(m.cost).toFixed(4)}` : `${compact(m.requests)} 次`;
+    return `<div class="stat-model"><span class="mono" title="${escapeHtml(m.model)}">${escapeHtml(m.model)}</span><span>${metric}</span><span>${compact(m.tokens)} Token</span><span class="meter"><i style="width:${Math.min(100, value / max * 100).toFixed(1)}%"></i></span></div>`;
+  }).join('') || `<div class="empty">${STATS_MODEL_MODE === 'cost' ? '上游尚未返回费用数据' : '今日暂无请求'}</div>`;
+}
+async function loadStats() {
+  try {
+    const s = await getApi(`/api/stats?tzOffset=${-new Date().getTimezoneOffset()}`);
+    STATS_DATA = s;
+    renderOverview();
+    const t = s.today || {};
+    const cards = [
+      ['今日请求数', compact(t.requests), `成功 ${compact(t.success)} · 近 2 天 ${compact(s.twoDays?.requests)}`],
+      ['今日 TOKEN', compact(t.tokens), `输入 ${compact(t.inputTokens)} · 输出 ${compact(t.outputTokens)}`],
+      ['今日计费', t.costSamples ? `$${Number(t.cost).toFixed(4)}` : '—', t.costSamples ? `上游提供费用的请求 ${t.costSamples} 条` : '上游未返回费用，无法计算'],
+      ['RPM', compact(s.rpm), '最近 60 秒请求数'],
+      ['TPM', compact(s.tpm), '最近 60 秒 Token 数'],
+      ['错误率', `${Number(s.errorRate || 0).toFixed(1)}%`, `平均延迟 ${compact(s.averageMs)}ms`],
+    ];
+    $('#statsCards').innerHTML = cards.map(([label, value, detail]) => `<div class="stat-tile"><div class="label">${label}</div><div class="value">${value}</div><div class="detail">${detail}</div></div>`).join('');
+    renderStatsModels();
+    const streamPct = t.requests ? Math.max(0, Math.min(100, t.stream / t.requests * 100)) : 0;
+    $('#statsComposition').innerHTML = `<div class="composition-legend"><span>流式 <b>${compact(t.stream)} · ${streamPct.toFixed(1)}%</b></span><span>非流式 <b>${compact((t.requests || 0) - (t.stream || 0))}</b></span></div><div class="composition-track"><i style="width:${streamPct.toFixed(1)}%"></i></div><div class="log-counts"><span>多次尝试 <b>${compact(t.retries)}</b></span><span>错误 <b>${compact(t.errors)}</b></span></div><div class="dim" style="font-size:12px;margin-top:14px">近 2 天：${compact(s.twoDays?.requests)} 次请求 · ${compact(s.twoDays?.tokens)} Token · ${compact(s.twoDays?.errors)} 次错误</div>`;
+    $('#statsStatus').textContent = `更新于 ${new Date(s.updatedAt).toLocaleTimeString()} · 统计基于近 2 天日志；Token 和费用以网关返回值为准`;
+  } catch { $('#statsStatus').textContent = '使用统计加载失败'; showNotice('使用统计加载失败，请检查服务连接后重试。'); }
+}
+
+const HIST = { range: 'today', status: 'all', page: 1, pages: 1 };
+let historySearchTimer;
+let historyRequestId = 0;
+function historyBounds() {
+  const now = Date.now();
+  if (HIST.range === 'custom') return { from: Date.parse($('#histFrom').value) || undefined, to: Date.parse($('#histTo').value) || undefined };
+  if (HIST.range === 'today') { const start = new Date(); start.setHours(0, 0, 0, 0); return { from: start.getTime(), to: now }; }
+  const duration = { '1h': 3600e3, '6h': 6 * 3600e3, '24h': 24 * 3600e3, '2d': 48 * 3600e3 }[HIST.range] || 48 * 3600e3;
+  return { from: now - duration, to: now };
+}
+function setHistoryRange(range) {
+  HIST.range = range; HIST.page = 1;
+  document.querySelectorAll('#histRanges button').forEach((b) => b.classList.toggle('active', b.dataset.range === range));
+  $('#histCustom').style.display = range === 'custom' ? 'flex' : 'none';
+  loadHistory();
+}
+function setHistoryStatus(statusFilter) {
+  HIST.status = statusFilter; HIST.page = 1;
+  document.querySelectorAll('#histStatuses button').forEach((b) => b.classList.toggle('active', b.dataset.status === statusFilter));
+  loadHistory();
+}
+function historyFiltersChanged() { HIST.page = 1; loadHistory(); }
+function historySearchChanged() { clearTimeout(historySearchTimer); historySearchTimer = setTimeout(historyFiltersChanged, 250); }
+function historyPage(delta) { HIST.page = Math.max(1, Math.min(HIST.pages, HIST.page + delta)); loadHistory(); }
 async function loadHistory() {
-  const { history } = await api('/api/history');
-  $('#histBody').innerHTML = history.length ? history.map((h) => `<tr>
-      <td>${fmt(h.ts)}</td><td class="mono">${escapeHtml(h.model)}</td>
-      <td>${h.account ? '<span class="badge">' + escapeHtml(h.account) + '</span>' : '<span class="dim">—</span>'}</td>
-      <td>${h.provider ? '<span class="badge">' + escapeHtml(h.provider) + '</span>' : '<span class="dim">—</span>'}</td>
-      <td class="mono dim">${escapeHtml(h.canonical || '—')}</td>
-      <td>${h.ms ?? '—'} ms</td>
-      <td>${h.stream ? '流式' : '非流式'}</td>
-      <td class="dim">${(h.trace || h.attempts || []).map((t) => escapeHtml(typeof t === 'string' ? t : `${t.upstream || 'auto'}(${t.status === 200 ? '✔' : '✗'}${t.ms}ms)`)).join(' → ') || '—'}</td>
-    </tr>`).join('') : '<tr><td colspan="8" class="empty">暂无记录 —— 把客户端 Base URL 指向代理地址即可自动记录</td></tr>';
+  const requestId = ++historyRequestId;
+  const params = new URLSearchParams({ status: HIST.status, page: String(HIST.page), pageSize: $('#histPageSize').value });
+  const { from, to } = historyBounds();
+  if (from) params.set('from', String(from));
+  if (to) params.set('to', String(to));
+  const q = $('#histSearch').value.trim(); if (q) params.set('q', q);
+  if ($('#histModel').value) params.set('model', $('#histModel').value);
+  if ($('#histAccount').value) params.set('accountId', $('#histAccount').value);
+  if ($('#histEndpoint').value) params.set('endpoint', $('#histEndpoint').value);
+  params.set('stream', $('#histStream').value);
+  try {
+    const r = await getApi(`/api/history?${params}`);
+    if (requestId !== historyRequestId) return;
+    HIST.page = r.page; HIST.pages = r.pages;
+    $('#histTotal').textContent = `${r.total.toLocaleString()} 条记录`;
+    $('#histCounts').innerHTML = [['错误总数', r.counts.error], ['4xx', r.counts['4xx']], ['5xx', r.counts['5xx']], ['401', r.counts['401']], ['429', r.counts['429']], ['499', r.counts['499']], ['多次尝试', r.counts.retries]].map(([label, value]) => `<span>${label}<b>${value}</b></span>`).join('');
+    const model = $('#histModel').value, account = $('#histAccount').value, endpoint = $('#histEndpoint').value;
+    $('#histModel').innerHTML = '<option value="">全部模型</option>' + (r.models || []).map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join('');
+    $('#histAccount').innerHTML = '<option value="">全部账号</option>' + (r.accounts || []).map((a) => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.name)}</option>`).join('');
+    $('#histEndpoint').innerHTML = '<option value="">全部端点</option>' + (r.endpoints || []).map((e) => `<option value="${escapeHtml(e)}">${escapeHtml(e)}</option>`).join('');
+    $('#histModel').value = model; $('#histAccount').value = account; $('#histEndpoint').value = endpoint;
+    $('#histBody').innerHTML = r.history.length ? r.history.map((h) => `<tr><td class="dim">${escapeHtml(new Date(h.ts).toLocaleString())}</td><td><span class="badge ${h.status < 400 ? 'green' : 'orange'}">${h.status}</span></td><td class="mono">${escapeHtml(h.model)}</td><td>${escapeHtml(h.account || '—')}</td><td>${escapeHtml(h.provider || '—')}</td><td class="mono">${escapeHtml(h.endpoint || '—')}</td><td>${compact(h.totalTokens)}</td><td>${h.ms} ms</td><td>${h.stream ? '流式' : '非流式'}</td><td class="dim" title="${escapeHtml(h.userAgent || '')}">${escapeHtml(h.ip || '—')}<div style="font-size:11px">${escapeHtml((h.userAgent || '').slice(0, 45))}</div></td><td class="dim" title="${escapeHtml(h.error || '')}">${escapeHtml((h.error || '').slice(0, 90))}${h.attempts > 1 ? `<div>${h.attempts} 次尝试</div>` : ''}</td></tr>`).join('') : '<tr><td colspan="11" class="empty">当前条件下暂无请求记录</td></tr>';
+    $('#histPageInfo').textContent = `第 ${r.page} / ${r.pages} 页`;
+    $('#histPrev').disabled = r.page <= 1; $('#histNext').disabled = r.page >= r.pages;
+  } catch { if (requestId === historyRequestId) { $('#histBody').innerHTML = '<tr><td colspan="11" class="empty">日志加载失败</td></tr>'; showNotice('请求日志加载失败，请检查筛选条件或服务连接。'); } }
 }
 
 let ACCS = null;
@@ -750,14 +975,18 @@ function collectAccounts() {
   const checked = document.querySelector('input[name="accActive"]:checked');
   const active = checked ? parseInt(checked.dataset.i) : Math.min(ACCS.active ?? 0, Math.max(0, accs.length - 1));
   const accountConcurrency = Math.min(32, Math.max(1, Math.trunc(Number($('#accountConcurrency').value) || 1)));
-  return { accounts: accs, mode, active, accountConcurrency };
+  const setting = (id, min, max) => Math.min(max, Math.max(min, Math.trunc(Number($(`#${id}`).value) || 0)));
+  return { accounts: accs, mode, active, accountConcurrency,
+    globalConcurrency: setting('globalConcurrency', 1, 128), globalRpm: setting('globalRpm', 0, 60000),
+    maxRetries: setting('maxRetries', 0, 10), rateLimitSwitchRetries: setting('rateLimitSwitchRetries', 0, 10),
+    retryIntervalMs: setting('retryIntervalMs', 0, 30000), transportRetryStrategy: $('#transportRetryStrategy').value };
 }
 
 async function saveAccounts() {
   const payload = collectAccounts();
   if (!payload.accounts.filter((a) => a.key).length) { accMsg('至少需要一个 key 非空的账号', true); return; }
   const r = await api('/api/accounts', payload);
-  if (r.ok) { accMsg(`已保存：${r.accounts} 个账号 · ${r.mode === 'roundrobin' ? '轮询' : '单账号'}模式 · 每账号并发 ${r.accountConcurrency}`); await loadAll(); }
+  if (r.ok) { await loadAll(); accMsg(`已保存：${r.accounts} 个账号 · ${r.mode === 'roundrobin' ? '轮询' : '单账号'}模式 · 每账号并发 ${r.accountConcurrency}`); $('#scheduleStatus').textContent = `已保存 · 全局并发 ${r.globalConcurrency} · RPM ${r.globalRpm || '不限'}`; }
   else accMsg(r.error?.message || '保存失败', true);
 }
 
@@ -798,13 +1027,14 @@ function importAccounts() {
   parsed.forEach((a) => {
     const key = String(a?.key || a?.apiKey || '').trim();
     if (!key || seen.has(key)) return;
+    if (cur.accounts.length >= 200) return;
     seen.add(key); cur.accounts.push({ name: String(a?.name || `账号${cur.accounts.length + 1}`).slice(0, 50), key, enabled: a?.enabled !== false }); added++;
   });
   if (!added) { accMsg('没有发现新的有效 key（重复账号已跳过）', true); return; }
   ACCS.accounts = cur.accounts; ACCS.mode = cur.mode; ACCS.active = cur.active; ACCS.accountConcurrency = cur.accountConcurrency;
   renderAccounts();
   $('#bulkAccounts').value = '';
-  accMsg(`已导入 ${added} 个账号，请保存配置`);
+  accMsg(`已导入 ${added} 个账号${cur.accounts.length === 200 ? '（已达 200 个账号上限）' : ''}，请保存配置`);
 }
 
 async function testSelectedAccounts() {
@@ -813,30 +1043,61 @@ async function testSelectedAccounts() {
   const indexes = [...document.querySelectorAll('.accSelect:checked')].map((el) => Number(el.dataset.i));
   const selected = indexes.map((i) => ACCS.accounts[i]).filter((a) => a?.key);
   if (!selected.length) { accMsg('请先勾选要测试的账号', true); return; }
+  if (selected.length > 50) { accMsg('一次最多测试 50 个账号，请减少勾选数量', true); return; }
   const box = $('#batchTestMsg'); box.style.display = 'block'; box.textContent = `正在测试 ${selected.length} 个账号…`;
-  const r = await api('/api/accounts/test-batch', { accounts: selected.map((a) => ({ id: a.id, key: a.key })) });
-  const results = r.results || [];
-  box.innerHTML = results.map((x) => `<div class="${x.ok ? 'match' : 'mismatch'}">${x.ok ? '✔' : '✘'} ${escapeHtml(selected[x.index]?.name || `账号${x.index + 1}`)} · ${x.ok ? `${x.ms} ms` : escapeHtml(x.error || '失败')}</div>`).join('') || '没有返回结果';
+  try {
+    const r = await api('/api/accounts/test-batch', { accounts: selected.map((a) => ({ id: a.id, key: a.key })) });
+    if (r.error) throw new Error(r.error?.message || '批量测试失败');
+    const results = r.results || [];
+    box.innerHTML = results.map((x) => `<div class="${x.ok ? 'match' : 'mismatch'}">${x.ok ? '✔' : '✘'} ${escapeHtml(selected[x.index]?.name || `账号${x.index + 1}`)} · ${x.ok ? `${x.ms} ms` : escapeHtml(x.error || '失败')}</div>`).join('') || '没有返回结果';
+  } catch (e) { box.textContent = e.message || '批量测试失败'; }
 }
 
 function usageNumber(value, unit) {
-  return value == null ? '—' : `${Number(value).toLocaleString()} ${escapeHtml(unit || '')}`.trim();
+  if (value == null || !Number.isFinite(Number(value))) return '—';
+  const text = unit === 'credits' ? Number(value).toFixed(4) : Number(value).toLocaleString();
+  return `${text} ${escapeHtml(unit || '')}`.trim();
 }
+let USAGE_ITEMS = [];
 function renderUsage(items) {
   $('#usageBody').innerHTML = (items || []).map((u) => {
-    const pct = u.limit > 0 && u.used != null ? Math.min(100, Math.max(0, u.used / u.limit * 100)) : 0;
-    return `<tr><td><span class="badge">${escapeHtml(u.account)}</span></td><td>${usageNumber(u.used, u.unit)}${u.limit > 0 ? `<div class="usage-bar"><i style="width:${pct}%"></i></div>` : ''}</td><td>${usageNumber(u.limit, u.unit)}</td><td class="${u.ok ? 'match' : 'dim'}">${u.ok ? usageNumber(u.remaining, u.unit) : '不可用'}</td><td class="dim">${u.resetAt ? escapeHtml(new Date(u.resetAt).toLocaleString()) : '—'}</td><td class="dim" style="font-size:11px">${u.ok ? escapeHtml(u.source || '') : escapeHtml(u.error || '接口未返回额度')}</td></tr>`;
-  }).join('') || '<tr><td colspan="6" class="empty">暂无账号</td></tr>';
+    const periods = Array.isArray(u.periods) ? u.periods : [];
+    const shown = periods.length ? periods : u.ok && u.limit > 0 && u.used != null
+      ? [{ label: '总额度', percent: u.used / u.limit * 100, used: u.used, limit: u.limit, unit: u.unit, resetAt: u.resetAt }]
+      : [];
+    const rows = shown.map((p, index) => {
+      const label = p.label;
+      const pct = p?.percent != null && Number.isFinite(Number(p.percent)) ? Math.max(0, Math.min(100, Number(p.percent))) : null;
+      const detail = p?.used != null && p?.limit != null ? `${p.used} / ${p.limit} ${p.unit || ''}` : '';
+      const title = detail || (p?.resetAt ? `重置：${new Date(p.resetAt).toLocaleString()}` : '暂无周期额度数据');
+      return `<div class="usage-row"><span class="usage-label">${escapeHtml(label)}</span><span class="usage-track" title="${escapeHtml(title)}"><i style="width:${pct == null ? 0 : pct.toFixed(1)}%"></i></span><strong class="usage-pct">${pct == null ? '—' : `${pct.toFixed(1)}%`}</strong>${index === 0 ? `<button class="usage-refresh" onclick="loadUsage(true, ${jsArg(u.id || '')})" title="刷新此账号用量" aria-label="刷新 ${escapeHtml(u.account)} 的用量">↻</button>` : '<span></span>'}</div>`;
+    }).join('');
+    const balance = !shown.length && u.ok && u.remaining != null;
+    const message = shown.length || balance ? '' : escapeHtml(u.error || '接口未返回额度数据');
+    const refresh = `<button class="usage-refresh" onclick="loadUsage(true, ${jsArg(u.id || '')})" title="刷新此账号用量" aria-label="刷新 ${escapeHtml(u.account)} 的用量">↻</button>`;
+    const empty = shown.length ? '' : balance
+      ? `<div class="usage-row"><span class="usage-label">余额</span><span class="usage-track"></span><strong class="usage-pct">${usageNumber(u.remaining, u.unit)}</strong>${refresh}</div>`
+      : `<div class="usage-row"><span class="usage-label">额度</span><span class="usage-track"><i style="width:0%"></i></span><strong class="usage-pct">—</strong>${refresh}</div>`;
+    return `<section class="usage-account"><div class="usage-account-title"><strong>用量</strong><span title="${escapeHtml(u.account)}">${escapeHtml(u.account)}</span></div><div class="usage-rows">${rows}${empty}${message ? `<div class="usage-message">${message}</div>` : ''}</div></section>`;
+  }).join('') || '<div class="empty">暂无账号</div>';
 }
-async function loadUsage(force = false) {
+async function loadUsage(force = false, id = '') {
   const btn = $('#usageRefreshBtn');
-  if (force) { btn.disabled = true; btn.textContent = '读取中…'; }
+  if (force && !id) { btn.disabled = true; btn.textContent = '读取中…'; }
   try {
-    const r = await api(`/api/accounts/usage${force ? '?refresh=1' : ''}`);
-    renderUsage(r.usage || []);
-    $('#usageStatus').textContent = `更新于 ${new Date(r.checkedAt || Date.now()).toLocaleTimeString()} · 超出并发上限的请求会进入该账号队列`;
+    const params = new URLSearchParams();
+    if (force) params.set('refresh', '1');
+    if (id) params.set('id', id);
+    const query = params.toString();
+    const r = await api(`/api/accounts/usage${query ? '?' + query : ''}`);
+    if (r.ok) {
+      if (id) USAGE_ITEMS = USAGE_ITEMS.map((u) => u.id === id ? (r.usage || [])[0] || u : u);
+      else USAGE_ITEMS = r.usage || [];
+      renderUsage(USAGE_ITEMS);
+      $('#usageStatus').textContent = `更新于 ${new Date(r.checkedAt || Date.now()).toLocaleTimeString()}`;
+    } else throw new Error(r.error?.message || '读取失败');
   } catch (e) { $('#usageStatus').textContent = '额度读取失败，请稍后重试'; }
-  if (force) { btn.disabled = false; btn.textContent = '↻ 刷新额度'; }
+  if (force && !id) { btn.disabled = false; btn.textContent = '↻ 全部刷新'; }
 }
 
 async function testAccount(i, btn) {
@@ -845,9 +1106,11 @@ async function testAccount(i, btn) {
   const acc = ACCS.accounts[i];
   if (!acc.key) { accMsg('请先填写该账号的 key', true); return; }
   btn.disabled = true; btn.textContent = '测试中…'; accMsg(`正在测试 ${acc.name} …`);
-  const r = await api('/api/accounts/test', { id: acc.id, key: acc.key });
-  btn.disabled = false; btn.textContent = '测试';
-  accMsg(r.ok ? `✔ ${acc.name} 可用（${r.ms} ms）${r.note ? ' · ' + r.note : ''}` : `✘ ${acc.name} 不可用：${r.error}`, !r.ok);
+  try {
+    const r = await api('/api/accounts/test', { id: acc.id, key: acc.key });
+    accMsg(r.ok ? `✔ ${acc.name} 可用（${r.ms} ms）${r.note ? ' · ' + r.note : ''}` : `✘ ${acc.name} 不可用：${r.error?.message || r.error || '测试失败'}`, !r.ok);
+  } catch (e) { accMsg(`✘ ${acc.name} 测试失败：${e.message}`, true); }
+  finally { btn.disabled = false; btn.textContent = '测试'; }
 }
 
 function toggleKeyVis() {
@@ -863,21 +1126,26 @@ function accMsg(msg, isErr) {
   el._t = setTimeout(() => { el.textContent = ''; }, 8000);
 }
 
-let currentPage = localStorage.getItem('cps_page') || 'overview';
+let currentPage = location.hash.slice(1) || localStorage.getItem('cps_page') || 'overview';
 function switchPage(page, button) {
   if (!document.querySelector(`[data-page-tab="${page}"]`)) page = 'overview';
   currentPage = page;
   localStorage.setItem('cps_page', page);
+  history.replaceState(null, '', `#${page}`);
   document.querySelectorAll('[data-page]').forEach((el) => el.classList.toggle('page-hidden', el.dataset.page !== page));
   document.querySelectorAll('[data-page-tab]').forEach((el) => el.classList.toggle('active', el.dataset.pageTab === page));
   if (button) button.blur();
+  if (ACCS && page === 'overview') loadStats();
+  if (ACCS && page === 'accounts') loadUsage(false).catch(() => {});
+  if (page === 'stats') loadStats();
+  if (page === 'logs') loadHistory();
 }
 
 let statusTimer;
 function status(msg) { $('#status').textContent = msg; clearTimeout(statusTimer); statusTimer = setTimeout(() => $('#status').textContent = '', 6000); }
 
-$('#proxyBase').onclick = () => navigator.clipboard.writeText(DATA.proxyBase).then(() => status('已复制代理地址'));
-$('#testModel').addEventListener('change', onTestModelChange);
+$('#proxyBase').onclick = () => { if (DATA?.proxyBase) navigator.clipboard.writeText(DATA.proxyBase).then(() => status('已复制代理地址')); };
+$('#testModel').addEventListener('change', () => onTestModelChange());
 $('#catFilter').addEventListener('input', renderCatalog);
 $('#loginKey').addEventListener('keydown', (e) => { if (e.key === 'Enter') tryLogin(); });
 switchPage(currentPage);
