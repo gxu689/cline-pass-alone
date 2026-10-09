@@ -1825,19 +1825,20 @@ func (s *State) runChatChain(req *http.Request, body map[string]any, model strin
 				last = &chatResult{Status: 429, Payload: map[string]any{"error": map[string]any{"message": "渠道冷却中", "type": "rate_limit"}}, Account: account, Started: started}
 				break
 			}
-			ctx, cancel, stopHeader := attemptContext(req.Context(), timeout, stream)
-			send := s.injectPrefs(body, model, sendAttempt)
-			encoded, _ := json.Marshal(send)
-			release, err := s.acquireSlot(ctx, account.Key)
+			// 排队等待不占用上游超时预算：拿到槽位后才开始 attempt 计时，排队超时明确报 503
+			queueCtx, cancelQueue := context.WithTimeout(req.Context(), timeout)
+			release, err := s.acquireSlot(queueCtx, account.Key)
+			cancelQueue()
 			if err != nil {
-				stopHeader()
-				cancel()
 				if req.Context().Err() != nil {
 					return nil, req.Context().Err()
 				}
-				last = &chatResult{Status: 502, Payload: map[string]any{"error": map[string]any{"message": err.Error(), "type": "upstream_error"}}, Account: account, Started: started}
+				last = &chatResult{Status: 503, Payload: map[string]any{"error": map[string]any{"message": "上游并发已满，排队超时", "type": "overload"}}, Account: account, Trace: append(lastTrace(last), TraceEntry{Upstream: stringValue(attempt["upstream"]), Account: account.Name, Status: 503, Note: err.Error()}), Started: started}
 				continue
 			}
+			ctx, cancel, stopHeader := attemptContext(req.Context(), timeout, stream)
+			send := s.injectPrefs(body, model, sendAttempt)
+			encoded, _ := json.Marshal(send)
 			upstreamURL := strings.TrimRight(s.configSnapshot().UpstreamBase, "/") + "/chat/completions"
 			upstreamReq, err := http.NewRequestWithContext(ctx, http.MethodPost, upstreamURL, bytes.NewReader(encoded))
 			if err != nil {

@@ -292,6 +292,42 @@ func TestRoutingRetryAndValidate(t *testing.T) {
 	}
 }
 
+func TestQueueWaitDoesNotConsumeAttemptBudget(t *testing.T) {
+	state := testState(t, "http://upstream.invalid")
+	state.config.MaxRetries = 0
+	state.config.GlobalConcurrency = 1
+	state.config.AccountConcurrency = 1
+	// 假上游：每次 500ms，且正确响应 ctx 取消（模拟真实传输层）
+	state.client.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		select {
+		case <-time.After(500 * time.Millisecond):
+			body := `{"choices":[{"message":{"content":"OK"}}]}`
+			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
+		case <-request.Context().Done():
+			return nil, request.Context().Err()
+		}
+	})
+	// 占住唯一的槽位 600ms：旧代码里排队等待吃掉 attempt 预算（600+500>1000ms）必失败；
+	// 新代码排队预算与上游预算分离，拿到槽位后重新计时，应成功
+	release, err := state.scheduler.acquire(context.Background(), "upstream-test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(600 * time.Millisecond)
+		release()
+	}()
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"cline-pass/test"}`))
+	result, err := state.runChatChain(request, map[string]any{"model": "cline-pass/test", "messages": []any{}}, "cline-pass/test", ModelConfig{}, false, time.Second)
+	if err != nil || result == nil || result.Status != http.StatusOK {
+		status := 0
+		if result != nil {
+			status = result.Status
+		}
+		t.Fatalf("排队等待不应消耗上游超时预算: status=%d err=%v", status, err)
+	}
+}
+
 func TestMaskedAccountKeyIsNotSaved(t *testing.T) {
 	state := testState(t, "https://upstream.invalid")
 	real := "sk_abcdefghijklmnopqrstuvwxyz0123"
