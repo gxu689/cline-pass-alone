@@ -155,8 +155,8 @@
   <div id="accEdit" style="display:none; position:fixed; inset:0; background:rgba(8,10,14,.85); z-index:40; align-items:center; justify-content:center;">
     <div style="background:var(--card); border:1px solid var(--border); border-radius:12px; padding:22px; width:min(460px, calc(100% - 24px));">
       <h2 style="font-size:15px; margin-bottom:12px;">编辑 API Key</h2>
-      <input id="editAccKey" type="text" autocomplete="off" spellcheck="false" style="width:100%; background:var(--card2); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:9px 10px; font-family:Consolas, monospace; font-size:13px;">
-      <p class="dim" style="font-size:12px; margin-top:8px;">占位符 •••••••• 表示沿用已保存的密钥，改成新密钥后点确定，再保存账号配置。</p>
+      <input id="editAccKey" type="text" autocomplete="off" spellcheck="false" placeholder="输入新的 API Key（留空则沿用原密钥）" style="width:100%; background:var(--card2); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:9px 10px; font-family:Consolas, monospace; font-size:13px;">
+      <p class="dim" style="font-size:12px; margin-top:8px;">占位符 •••••••• 表示沿用已保存的密钥。改成新密钥后点确定，再点「保存账号配置」。框内留空同样表示沿用原密钥。</p>
       <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:14px;">
         <button class="ghost" type="button" onclick="closeAccountEdit()">取消</button>
         <button type="button" onclick="applyAccountEdit()">确定</button>
@@ -1026,7 +1026,9 @@ function closeAccountEdit() { editingIndex = -1; $('#accEdit').style.display = '
 function applyAccountEdit() {
   if (editingIndex < 0) return;
   const cur = collectAccounts();
-  cur.accounts[editingIndex].key = $('#editAccKey').value.trim();
+  // 留空 = 沿用原密钥；避免误触清空后保存，把真实 key 覆盖成空串
+  const next = $('#editAccKey').value.trim();
+  if (next) cur.accounts[editingIndex].key = next;
   ACCS.accounts = cur.accounts; ACCS.mode = cur.mode; ACCS.active = cur.active;
   closeAccountEdit();
   renderAccounts();

@@ -292,6 +292,38 @@ func TestRoutingRetryAndValidate(t *testing.T) {
 	}
 }
 
+func TestMaskedAccountKeyIsNotSaved(t *testing.T) {
+	state := testState(t, "https://upstream.invalid")
+	real := "sk_abcdefghijklmnopqrstuvwxyz0123"
+	state.config.Accounts = []Account{{Name: "jm01", Key: real, Enabled: true}}
+	id := accountID(real)
+	save := func(key string) int {
+		body, _ := json.Marshal(map[string]any{
+			"accounts": []map[string]any{{"id": id, "name": "jm01", "key": key, "enabled": true}},
+			"mode":     "single", "active": 0, "accountConcurrency": 1,
+		})
+		request := httptest.NewRequest(http.MethodPost, "/api/accounts", bytes.NewReader(body))
+		request.Header.Set("X-Admin-Key", state.config.AdminKey)
+		recorder := httptest.NewRecorder()
+		state.router().ServeHTTP(recorder, request)
+		return recorder.Code
+	}
+	// 掩码的圆点数量被输入法/截断改动，或换成半角星号时，仍必须回退到已保存的真实 key
+	masks := []string{"••••••••", "•••••••", "••••••••••", "•••••••••••", "••••••••••••••••", "********", "******", " ··· "}
+	for _, masked := range masks {
+		state.config.Accounts[0].Key = real
+		if code := save(masked); code != http.StatusOK || state.config.Accounts[0].Key != real {
+			t.Fatalf("掩码 %q 覆盖了真实 key: code=%d key=%q", masked, code, state.config.Accounts[0].Key)
+		}
+	}
+	// 真正的新 key 仍要生效，且以星号开头的长 key 不能被误判为掩码
+	for _, fresh := range []string{"sk_brand-new-key-0123456789", strings.Repeat("*", 40), "sk_" + strings.Repeat("•", 40)} {
+		if code := save(fresh); code != http.StatusOK || state.config.Accounts[0].Key != fresh {
+			t.Fatalf("新 key %q 未保存: code=%d key=%q", fresh, code, state.config.Accounts[0].Key)
+		}
+	}
+}
+
 func TestAccountUsageUsesPassWindows(t *testing.T) {
 	reset := time.Now().UTC().Add(2 * time.Hour).Format(time.RFC3339)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -1034,6 +1034,16 @@ func maskKey(key string) string {
 	}
 	return maskedAccountKey
 }
+
+// 前端编辑框里沿用旧密钥时回传的是掩码；圆点数量被输入法或截断改动、或换成半角星号时同样按占位符处理。
+// 真实 Cline key 以 sk_ 开头，不会形如一串掩码字符。长度按字符数（非字节数）判断，圆点是多字节字符。
+func looksMaskedKey(key string) bool {
+	key = strings.TrimSpace(key)
+	if key == "" || strings.HasPrefix(key, "sk_") || len([]rune(key)) > 32 {
+		return false
+	}
+	return strings.TrimLeft(key, "•·*") == ""
+}
 func validModelID(value string) bool {
 	return len(value) > 0 && len(value) <= 200 && modelIDPattern.MatchString(value) && value != "constructor" && value != "prototype" && value != "__proto__"
 }
@@ -2760,7 +2770,7 @@ func (s *State) routeAuthed(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		key := strings.TrimSpace(stringValue(body["key"]))
-		if key == maskedAccountKey {
+		if looksMaskedKey(key) {
 			cfg := s.configSnapshot()
 			for _, account := range cfg.Accounts {
 				if accountID(account.Key) == stringValue(body["id"]) {
@@ -2769,7 +2779,7 @@ func (s *State) routeAuthed(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		if key == "" || key == maskedAccountKey {
+		if key == "" || looksMaskedKey(key) {
 			s.sendJSON(w, 400, map[string]any{"error": map[string]any{"message": "key required"}})
 			return
 		}
@@ -2794,7 +2804,7 @@ func (s *State) routeAuthed(w http.ResponseWriter, r *http.Request) {
 		var resultsMu sync.Mutex
 		for index, raw := range body.Accounts {
 			key := strings.TrimSpace(stringValue(raw["key"]))
-			if key == maskedAccountKey {
+			if looksMaskedKey(key) {
 				for _, account := range cfg.Accounts {
 					if accountID(account.Key) == stringValue(raw["id"]) {
 						key = account.Key
@@ -2802,7 +2812,7 @@ func (s *State) routeAuthed(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
-			if key == "" || key == maskedAccountKey {
+			if key == "" || looksMaskedKey(key) {
 				continue
 			}
 			if err := validateAccountKey(key); err != nil {
@@ -2876,14 +2886,15 @@ func (s *State) routeAuthed(w http.ResponseWriter, r *http.Request) {
 			for i, raw := range body.Accounts {
 				key := strings.TrimSpace(stringValue(raw["key"]))
 				id := stringValue(raw["id"])
-				if key == maskedAccountKey {
+				if looksMaskedKey(key) {
+					key = ""
 					for _, old := range cfg.Accounts {
 						if accountID(old.Key) == id {
 							key = old.Key
 							break
 						}
 					}
-					if key == maskedAccountKey {
+					if key == "" {
 						s.sendJSON(w, 409, map[string]any{"error": map[string]any{"message": "账号列表已变化，请刷新页面后再保存"}})
 						return
 					}
