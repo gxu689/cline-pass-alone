@@ -1,0 +1,57 @@
+--- server-orig.js	2026-10-09 22:21:53
++++ server-patched.js	2026-10-09 22:21:42
+@@ -854,11 +854,15 @@
+ 
+ // 单次向上游网关发起非流式请求；返回 { status, out, routing, netError, acc }
+ // 异常（网络错误/非 JSON/非 200）不抛出，由调用方决定切换
+-async function attemptOnce(modelId, body, attempt, acc, signal) {
++async function attemptOnce(modelId, body, attempt, acc, ctrl, attemptTimeoutMs) {
+   const send = injectPrefs(body, modelId, attempt);
++  const signal = ctrl.signal;
+   let release;
++  let timer = null;
+   try {
+     release = await acquireAccountSlot(acc, signal);
++    // 排队拿到槽位后才开始 attempt 计时，排队等待不占用上游超时预算
++    timer = setTimeout(() => ctrl.abort(), attemptTimeoutMs);
+     const res = await fetch(`${config.upstreamBase}/chat/completions`, {
+       method: 'POST', headers: chatHeaders(acc.key), body: JSON.stringify(send), signal,
+     });
+@@ -870,6 +874,7 @@
+   } catch (e) {
+     return { status: 502, out: { error: { message: `upstream fetch failed: ${e.message}`, type: 'upstream_error' } }, routing: {}, netError: e.message, acc };
+   } finally {
++    if (timer) clearTimeout(timer);
+     release?.();
+   }
+ }
+@@ -905,7 +910,7 @@
+         const t1 = Date.now();
+         const ctrl = new AbortController();
+         activeCtrl = ctrl;
+-        const timer = setTimeout(() => ctrl.abort(), attemptTimeoutMs);
++        let timer = null; // 计时器改到拿到槽位之后启动，排队等待不再吃超时预算
+         let release;
+         try {
+           if (stream) {
+@@ -914,6 +919,7 @@
+             let netError = null;
+             try {
+               release = await acquireAccountSlot(acc, ctrl.signal);
++              timer = setTimeout(() => ctrl.abort(), attemptTimeoutMs);
+               up = await fetch(`${config.upstreamBase}/chat/completions`, { method: 'POST', headers: chatHeaders(acc.key), body: JSON.stringify(send), signal: ctrl.signal });
+             } catch (e) { netError = e.message; }
+             const ctype = up?.headers?.get('content-type') || '';
+@@ -960,10 +966,10 @@
+               last = { status: 502, out: { error: { message: `upstream fetch failed: ${netError || 'no response'}`, type: 'upstream_error' } }, routing: {}, acc, netError: netError || 'no response' };
+             }
+           } else {
+-            last = await attemptOnce(modelId, body, attempt, acc, ctrl.signal);
++            last = await attemptOnce(modelId, body, attempt, acc, ctrl, attemptTimeoutMs);
+           }
+         } finally {
+-          clearTimeout(timer);
++          if (timer) clearTimeout(timer);
+           if (!keepCloseHook) release?.();
+         }
+         const note = last.netError || (last.status === 200 ? 'ok' : errText(last.out?.error?.message || last.out?.error).slice(0, 160));
